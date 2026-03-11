@@ -102,9 +102,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        working-directory: qa-cicd-practice
 
       - name: Run integration tests
         run: node scripts/run-tests.js integration
+        working-directory: qa-cicd-practice 
         env:
           NODE_ENV: test
 
@@ -148,6 +150,7 @@ jobs:
 
       - name: Run E2E tests
         run: node scripts/run-tests.js e2e
+        working-directory: qa-cicd-practice
         env:
           NODE_ENV: test
 
