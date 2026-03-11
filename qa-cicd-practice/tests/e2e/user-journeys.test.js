@@ -68,7 +68,7 @@ describe('E2E Journey 1: Customer browses store and places an order', () => {
     expect(history.body.data[0].productId).toBe(mouse.id);
   });
 });
-
+//newusertest
 // ═══════════════════════════════════════════════════════════════════════════
 // JOURNEY 2: Admin manages product inventory
 // ═══════════════════════════════════════════════════════════════════════════
