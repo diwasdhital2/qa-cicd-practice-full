@@ -56,9 +56,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
+        working-directory: qa-cicd-practice
       - name: Run unit tests
         run: node scripts/run-tests.js unit
+        working-directory: qa-cicd-practice
         # Non-zero exit code automatically fails the job and blocks the PR
 
       - name: Upload test results
