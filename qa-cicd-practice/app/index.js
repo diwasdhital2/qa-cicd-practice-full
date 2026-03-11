@@ -68,7 +68,7 @@ class App {
       });
     }
 
-    // Response helpers
+    // Response helpers newadded comments
     res.json = (data, status = 200) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
