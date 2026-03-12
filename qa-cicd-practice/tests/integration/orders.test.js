@@ -173,3 +173,4 @@ describe('Workflow: create product → place order → verify stock', () => {
     expect(unchanged.body.data.stock).toBe(6);
   });
 });
+//this is my change done by rojesh
