@@ -33,6 +33,12 @@ on:
         type: choice
         options: [all, unit, integration, e2e]
 
+# ✅ TOP LEVEL PERMISSIONS — applies to all jobs
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 ##############################################################################
 # JOB 1 — UNIT TESTS
 # Runs on: EVERY push to any branch (fastest feedback loop)
@@ -46,28 +52,32 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}    # ✅ fix git auth error
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
         working-directory: qa-cicd-practice
+
       - name: Run unit tests
-        run: node scripts/run-tests.js unit
-        working-directory: qa-cicd-practice
+        run: |
+          mkdir -p reports
+          node scripts/run-tests.js unit | tee reports/unit-results.txt
+        working-directory: qa-cicd-practice    # ✅ saves output to file
         # Non-zero exit code automatically fails the job and blocks the PR
 
       - name: Upload test results
         if: always()               # upload even on failure so you can debug
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: unit-test-results
-          path: reports/
+          path: qa-cicd-practice/reports/      # ✅ correct path
           retention-days: 7
 
 ##############################################################################
@@ -92,30 +102,33 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}    # ✅ fix git auth error
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
-        working-directory: qa-cicd-practice
+        working-directory: qa-cicd-practice    # ✅ fixed
 
       - name: Run integration tests
-        run: node scripts/run-tests.js integration
-        working-directory: qa-cicd-practice 
+        run: |
+          mkdir -p reports
+          node scripts/run-tests.js integration | tee reports/integration-results.txt
+        working-directory: qa-cicd-practice    # ✅ saves output to file
         env:
           NODE_ENV: test
 
       - name: Upload integration results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: integration-test-results
-          path: reports/
+          path: qa-cicd-practice/reports/      # ✅ correct path
           retention-days: 7
 
 ##############################################################################
@@ -137,29 +150,33 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}    # ✅ fix git auth error
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
+        working-directory: qa-cicd-practice    # ✅ fixed
 
       - name: Run E2E tests
-        run: node scripts/run-tests.js e2e
-        working-directory: qa-cicd-practice
+        run: |
+          mkdir -p reports
+          node scripts/run-tests.js e2e | tee reports/e2e-results.txt
+        working-directory: qa-cicd-practice    # ✅ saves output to file
         env:
           NODE_ENV: test
 
       - name: Upload E2E results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: e2e-test-results
-          path: reports/
+          path: qa-cicd-practice/reports/      # ✅ correct path
           retention-days: 14
 
 ##############################################################################
@@ -176,75 +193,20 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}    # ✅ fix git auth error
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # cache: 'npm'
 
       - name: Install production dependencies
         run: npm ci --omit=dev
+        working-directory: qa-cicd-practice    # ✅ fixed
 
       - name: Create build artifact
         run: |
           tar -czf build-${{ github.sha }}.tar.gz app/ package.json scripts/
           echo "Build artifact created: build-${{ github.sha }}.tar.gz"
-          echo "Git SHA: ${{ github.sha }}"
-          echo "Branch:  ${{ github.ref_name }}"
-          echo "Actor:   ${{ github.actor }}"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ github.run_number }}
-          path: build-*.tar.gz
-          retention-days: 30
-
-##############################################################################
-# JOB 5 — NOTIFY (always runs, summarises what happened)
-# Posts result to PR as a comment with a pass/fail table
-##############################################################################
-  notify:
-    name: "📣 Post Results"
-    runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, e2e-tests]
-    if: always() && github.event_name == 'pull_request'
-
-    steps:
-      - name: Post PR comment with test summary
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const unit        = '${{ needs.unit-tests.result }}';
-            const integration = '${{ needs.integration-tests.result }}';
-            const e2e         = '${{ needs.e2e-tests.result }}';
-
-            const icon = s => s === 'success' ? '✅' : s === 'skipped' ? '⏭️' : '❌';
-            const allPassed = [unit, integration, e2e].every(s => s === 'success' || s === 'skipped');
-
-            const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-
-            const body = [
-              `## ${allPassed ? '✅ All Tests Passed' : '❌ Tests Failed'} — QA Pipeline`,
-              '',
-              '| Suite | Status |',
-              '|-------|--------|',
-              `| 🧪 Unit Tests        | ${icon(unit)} ${unit}        |`,
-              `| 🔗 Integration Tests | ${icon(integration)} ${integration} |`,
-              `| 🎭 E2E Tests         | ${icon(e2e)} ${e2e}         |`,
-              '',
-              allPassed
-                ? '**This PR is safe to merge.** All automated tests passed.'
-                : '**⚠️ Do not merge.** Fix the failing tests before merging.',
-              '',
-              `[View full pipeline run →](${runUrl})`,
-            ].join('\n');
-
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body,
-            });
