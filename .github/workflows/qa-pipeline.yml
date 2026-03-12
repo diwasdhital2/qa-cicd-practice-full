@@ -33,7 +33,8 @@ on:
         type: choice
         options: [all, unit, integration, e2e]
 
-  permissions:
+# ✅ TOP LEVEL PERMISSIONS — applies to all jobs
+permissions:
   contents: read
   pull-requests: write
   issues: write
@@ -69,9 +70,10 @@ jobs:
       - name: Run unit tests
         run: node scripts/run-tests.js unit | tee reports/unit-results.txt
         working-directory: qa-cicd-practice    # ✅ saves output to file
+        # Non-zero exit code automatically fails the job and blocks the PR
 
       - name: Upload test results
-        if: always()
+        if: always()               # upload even on failure so you can debug
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-results
@@ -87,9 +89,10 @@ jobs:
   integration-tests:
     name: "🔗 Integration Tests"
     runs-on: ubuntu-latest
-    needs: unit-tests
+    needs: unit-tests              # only runs if unit tests passed
     timeout-minutes: 15
 
+    # Skip on feature branch pushes — only run on PRs and main/develop
     if: |
       github.event_name == 'pull_request' ||
       github.ref == 'refs/heads/main'     ||
@@ -227,10 +230,10 @@ jobs:
     needs: [unit-tests, integration-tests, e2e-tests]
     if: always() && github.event_name == 'pull_request'
 
+    # ✅ JOB LEVEL PERMISSIONS — extra safety for posting comments
     permissions:
       pull-requests: write
       issues: write
-
 
     steps:
       - name: Post PR comment with test summary
