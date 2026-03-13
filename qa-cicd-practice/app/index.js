@@ -115,7 +115,7 @@ function validateProduct({ name, price, stock, category }) {
   if (!category || String(category).trim() === '') return 'Category is required';
   return null;
 }
-
+//this will introducebug
 function validateOrder({ productId, quantity, userId }) {
   if (!productId)                                       return 'productId is required';
   if (!userId || String(userId).trim() === '')          return 'userId is required';
