@@ -111,7 +111,7 @@ class App {
 function validateProduct({ name, price, stock, category }) {
   if (!name || String(name).trim() === '')      return 'Name is required';
   if (price === undefined || price === null)     return 'Price is required';
-  if (typeof price !== 'number' || price < -999)   return 'Price must be a non-negative number';
+  if (typeof price !== 'number' || price < 0)   return 'Price must be a non-negative number';
   if (stock === undefined || stock === null)     return 'Stock is required';
   if (!Number.isInteger(stock) || stock < 0)    return 'Stock must be a non-negative integer';
   if (!category || String(category).trim() === '') return 'Category is required';
