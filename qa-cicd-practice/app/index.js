@@ -115,7 +115,7 @@ function validateProduct({ name, price, stock, category }) {
   if (!category || String(category).trim() === '') return 'Category is required';
   return null;
 }
-//this will introducebug
+//this will introducebug for negative price, but it's intentional to have some edge cases for testing
 function validateOrder({ productId, quantity, userId }) {
   if (!productId)                                       return 'productId is required';
   if (!userId || String(userId).trim() === '')          return 'userId is required';
