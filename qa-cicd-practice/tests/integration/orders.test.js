@@ -5,6 +5,7 @@
  *          and that multiple components work together correctly.
  * Runtime: ~3–5 seconds
  */
+ //this is a test comment for practice
 'use strict';
 //this is a test comment to trigger the pipeline
 const { createApp } = require('../../app/index');
