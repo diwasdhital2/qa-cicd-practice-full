@@ -73,6 +73,7 @@ jobs:
         run: |
           mkdir -p reports
           node scripts/run-tests.js unit | tee reports/unit-results.txt
+          exit ${PIPESTATUS[0]}          # ✅ preserves exit code so failures are caught
         # Non-zero exit code automatically fails the job and blocks the PR
 
       - name: Upload test results
@@ -121,6 +122,7 @@ jobs:
         run: |
           mkdir -p reports
           node scripts/run-tests.js integration | tee reports/integration-results.txt
+          exit ${PIPESTATUS[0]}          # ✅ preserves exit code so failures are caught
         env:
           NODE_ENV: test
 
@@ -167,6 +169,7 @@ jobs:
         run: |
           mkdir -p reports
           node scripts/run-tests.js e2e | tee reports/e2e-results.txt
+          exit ${PIPESTATUS[0]}          # ✅ preserves exit code so failures are caught
         env:
           NODE_ENV: test
 
