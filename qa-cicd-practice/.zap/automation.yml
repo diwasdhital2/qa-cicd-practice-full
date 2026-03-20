@@ -1,0 +1,69 @@
+env:
+  contexts:
+    - name: "ShopEase"
+      urls:
+        - "http://localhost:3001"
+      includePaths:
+        - "http://localhost:3001.*"
+      excludePaths:
+        - "http://localhost:3001/logout"
+      authentication:
+        method: "form"
+        parameters:
+          loginPageUrl: "http://localhost:3001/login"
+          loginRequestUrl: "http://localhost:3001/login"
+          loginRequestBody: "username={%username%}&password={%password%}"
+        verification:
+          method: "response"
+          loggedInRegex: "Sign out"
+          loggedOutRegex: "Sign in"
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "alice"
+          credentials:
+            username: "alice"
+            password: "alice123"
+        - name: "admin"
+          credentials:
+            username: "admin"
+            password: "shopAdmin@99"
+
+jobs:
+  # Step 1 — Spider crawl as alice to find all pages
+  - type: spider
+    parameters:
+      context: "ShopEase"
+      user: "alice"
+      maxDuration: 2
+      maxDepth: 5
+
+  # Step 2 — Ajax spider for JavaScript-heavy pages
+  - type: spiderAjax
+    parameters:
+      context: "ShopEase"
+      user: "alice"
+      maxDuration: 2
+
+  # Step 3 — Passive scan all discovered pages
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  # Step 4 — Active scan (actually attempts attacks)
+  - type: activeScan
+    parameters:
+      context: "ShopEase"
+      user: "alice"
+      policy: "Default Policy"
+
+  # Step 5 — Generate reports
+  - type: report
+    parameters:
+      template: "traditional-html"
+      reportFile: "report_html"
+    risks:
+      - high
+      - medium
+      - low
+      - informational

@@ -179,16 +179,19 @@ jobs:
 
 ##############################################################################
 # JOB 4 — ZAP SECURITY SCAN
-# Runs on: Pull Requests and merges to main and nightly schedule
-# Depends on: integration-tests passing (app must be stable before scanning)
-# Reports: findings posted as GitHub Issues + HTML artifact
-# Does NOT block the build (fail_action: false) — reports only
+# Runs on: Pull Requests, merges to main, nightly schedule
+# Depends on: integration-tests passing
+#
+# THREE LAYERS OF SCANNING:
+#   Layer 1 — Manual curl checks  : confirms known vulns (fast, reliable)
+#   Layer 2 — ZAP full active scan: authenticated crawl + attack attempts
+#   Layer 3 — ZAP report artifact : full HTML report for download
 ##############################################################################
   zap-security-scan:
     name: "🔐 ZAP Security Scan"
     runs-on: ubuntu-latest
     needs: integration-tests
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     if: |
       github.event_name == 'pull_request' ||
@@ -196,7 +199,6 @@ jobs:
       github.event_name == 'schedule'     ||
       github.event_name == 'workflow_dispatch'
 
-    # ZAP needs these permissions to post findings as GitHub Issues
     permissions:
       contents: read
       issues: write
@@ -216,47 +218,178 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ── Start the app so ZAP has something to scan ──────────────
+      # ── Start the app ────────────────────────────────────────────
       - name: Start vulnerable app
-        run: |
-          cd app
-          node vulnerable_webapp.js &
-          echo "APP_PID=$!" >> $GITHUB_ENV
-        working-directory: qa-cicd-practice
+        run: node app/vulnerable_webapp.js &
 
-      # ── Wait until the app is actually responding ───────────────
+      # ── Wait until app is responding ────────────────────────────
       - name: Wait for app to be ready
         run: |
           echo "Waiting for app on http://localhost:3001 ..."
           for i in {1..20}; do
             if curl -s --fail http://localhost:3001 > /dev/null 2>&1; then
-              echo "✅ App is up and responding!"
+              echo "✅ App is up!"
               break
             fi
             echo "  Attempt $i/20 — retrying in 3s..."
             sleep 3
           done
-          # Final check — fail the job early if app never started
           curl -sf http://localhost:3001 > /dev/null || (echo "❌ App failed to start" && exit 1)
-        working-directory: qa-cicd-practice
 
-      # ── ZAP Baseline Scan (passive, ~3 min) ─────────────────────
-      # Passive scan: crawls the app and checks responses for known
-      # vulnerability patterns — no active exploitation attempted.
-      - name: ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
+      # ── LAYER 1: Manual Vulnerability Checks ────────────────────
+      # Directly tests each known vulnerability using curl.
+      # Fast, reliable, and specific to your app's attack surface.
+      - name: Run manual vulnerability checks
+        run: |
+          mkdir -p reports
+          REPORT="reports/security-manual.txt"
+          VULNS_FOUND=0
+
+          echo "================================================" | tee -a $REPORT
+          echo "  MANUAL SECURITY SCAN — $(date)"                 | tee -a $REPORT
+          echo "  Target: http://localhost:3001"                   | tee -a $REPORT
+          echo "================================================"  | tee -a $REPORT
+          echo ""                                                   | tee -a $REPORT
+
+          # ── INJ-1: SQL Injection via search ───────────────────
+          echo "[ INJ-1 ] SQL Injection on /search ..."           | tee -a $REPORT
+          SQLI=$(curl -s "http://localhost:3001/search?q=%25'%20UNION%20SELECT%20id,username,password,email,role,balance,emoji,description%20FROM%20users--")
+          if echo "$SQLI" | grep -qi "alice123\|bob12345\|shopAdmin"; then
+            echo "  ⚠️  VULNERABLE — passwords leaked via UNION attack" | tee -a $REPORT
+            VULNS_FOUND=$((VULNS_FOUND + 1))
+          else
+            echo "  ✅ PASS"                                       | tee -a $REPORT
+          fi
+          echo ""                                                   | tee -a $REPORT
+
+          # ── CF-2: Sensitive data leak at /health ──────────────
+          echo "[ CF-2  ] Sensitive data at /health ..."          | tee -a $REPORT
+          HEALTH=$(curl -s "http://localhost:3001/health")
+          if echo "$HEALTH" | grep -qi "Sh0pS3cr3t\|shopAdmin@99\|shop_admin"; then
+            echo "  ⚠️  VULNERABLE — DB credentials exposed"      | tee -a $REPORT
+            VULNS_FOUND=$((VULNS_FOUND + 1))
+          else
+            echo "  ✅ PASS"                                       | tee -a $REPORT
+          fi
+          echo ""                                                   | tee -a $REPORT
+
+          # ── BAC-2: Weak base64 forged admin token ─────────────
+          echo "[ BAC-2 ] Forged admin cookie ..."                | tee -a $REPORT
+          ADMIN_TOKEN=$(echo -n "admin" | base64)
+          ADMIN_PAGE=$(curl -s -b "token=$ADMIN_TOKEN" "http://localhost:3001/admin")
+          if echo "$ADMIN_PAGE" | grep -qi "Admin Panel\|shopAdmin@99"; then
+            echo "  ⚠️  VULNERABLE — admin access via forged base64 token" | tee -a $REPORT
+            VULNS_FOUND=$((VULNS_FOUND + 1))
+          else
+            echo "  ✅ PASS"                                       | tee -a $REPORT
+          fi
+          echo ""                                                   | tee -a $REPORT
+
+          # ── BAC-1: IDOR — alice viewing bob's orders ──────────
+          echo "[ BAC-1 ] IDOR on /account/orders ..."            | tee -a $REPORT
+          curl -s -X POST http://localhost:3001/login \
+            -d "username=alice&password=alice123" \
+            -c /tmp/alice_cookies.txt \
+            -L > /dev/null
+          IDOR=$(curl -s -b /tmp/alice_cookies.txt \
+            "http://localhost:3001/account/orders?userId=2")
+          if echo "$IDOR" | grep -qi "Viewing orders for\|bob"; then
+            echo "  ⚠️  VULNERABLE — alice can see bob's orders"  | tee -a $REPORT
+            VULNS_FOUND=$((VULNS_FOUND + 1))
+          else
+            echo "  ✅ PASS"                                       | tee -a $REPORT
+          fi
+          echo ""                                                   | tee -a $REPORT
+
+          # ── BAC-3: Privilege escalation via register ──────────
+          echo "[ BAC-3 ] Privilege escalation via /register ..." | tee -a $REPORT
+          curl -s -X POST http://localhost:3001/register \
+            -d "username=zaptest_hacker&password=zaptest123&email=zap@test.com&role=admin" \
+            -L > /dev/null
+          curl -s -X POST http://localhost:3001/login \
+            -d "username=zaptest_hacker&password=zaptest123" \
+            -c /tmp/hacker_cookies.txt \
+            -L > /dev/null
+          PRIVESC=$(curl -s -b /tmp/hacker_cookies.txt "http://localhost:3001/admin")
+          if echo "$PRIVESC" | grep -qi "Admin Panel"; then
+            echo "  ⚠️  VULNERABLE — anyone can register as admin" | tee -a $REPORT
+            VULNS_FOUND=$((VULNS_FOUND + 1))
+          else
+            echo "  ✅ PASS"                                       | tee -a $REPORT
+          fi
+          echo ""                                                   | tee -a $REPORT
+
+          # ── INJ-2: HTML injection on login ────────────────────
+          echo "[ INJ-2 ] HTML injection on /login ..."           | tee -a $REPORT
+          HTMLINJ=$(curl -s -X POST http://localhost:3001/login \
+            -d "username=<b>INJECTED</b>&password=wrong")
+          if echo "$HTMLINJ" | grep -q "<b>INJECTED</b>"; then
+            echo "  ⚠️  VULNERABLE — raw HTML reflected in error" | tee -a $REPORT
+            VULNS_FOUND=$((VULNS_FOUND + 1))
+          else
+            echo "  ✅ PASS"                                       | tee -a $REPORT
+          fi
+          echo ""                                                   | tee -a $REPORT
+
+          # ── ORD-1: IDOR — edit any order by ID ───────────────
+          echo "[ ORD-1 ] IDOR on /orders/:id/edit ..."           | tee -a $REPORT
+          EDIT=$(curl -s -b /tmp/alice_cookies.txt \
+            "http://localhost:3001/orders/2/edit")
+          if echo "$EDIT" | grep -qi "Edit Order\|Save Changes"; then
+            echo "  ⚠️  VULNERABLE — any user can edit any order" | tee -a $REPORT
+            VULNS_FOUND=$((VULNS_FOUND + 1))
+          else
+            echo "  ✅ PASS"                                       | tee -a $REPORT
+          fi
+          echo ""                                                   | tee -a $REPORT
+
+          # ── Missing security headers ──────────────────────────
+          echo "[ HDR   ] Security headers check ..."             | tee -a $REPORT
+          HEADERS=$(curl -sI "http://localhost:3001")
+          MISSING=""
+          echo "$HEADERS" | grep -qi "X-Frame-Options"        || MISSING="$MISSING X-Frame-Options"
+          echo "$HEADERS" | grep -qi "X-Content-Type-Options"  || MISSING="$MISSING X-Content-Type-Options"
+          echo "$HEADERS" | grep -qi "Content-Security-Policy" || MISSING="$MISSING Content-Security-Policy"
+          if [ -n "$MISSING" ]; then
+            echo "  ⚠️  VULNERABLE — missing:$MISSING"           | tee -a $REPORT
+            VULNS_FOUND=$((VULNS_FOUND + 1))
+          else
+            echo "  ✅ PASS"                                       | tee -a $REPORT
+          fi
+          echo ""                                                   | tee -a $REPORT
+
+          # ── Summary ───────────────────────────────────────────
+          echo "================================================"  | tee -a $REPORT
+          echo "  TOTAL VULNERABILITIES FOUND: $VULNS_FOUND / 8"  | tee -a $REPORT
+          echo "================================================"  | tee -a $REPORT
+
+          echo "VULNS_FOUND=$VULNS_FOUND" >> $GITHUB_ENV
+          exit 0
+
+      - name: Upload manual security report
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: manual-security-report
+          path: qa-cicd-practice/reports/security-manual.txt
+          retention-days: 30
+
+      # ── LAYER 2: ZAP Full Authenticated Scan ────────────────────
+      # ZAP logs in, crawls all pages, actively attempts XSS + SQLi
+      - name: ZAP Full Authenticated Scan
+        uses: zaproxy/action-full-scan@v0.10.0
         with:
           target: 'http://localhost:3001'
           rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'                   # -a = include ajax spider
-          allow_issue_writing: true           # posts findings to GitHub Issues
-          fail_action: false                  # set to true to block PRs on findings
-          artifact_name: 'zap-baseline-report'
+          cmd_options: '-a -z "-config scanner.attackStrength=HIGH -config spider.postForms=true"'
+          allow_issue_writing: true
+          fail_action: false
+          artifact_name: 'zap-full-report'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Upload full HTML + JSON report ───────────────────────────
-      - name: Upload ZAP HTML Report
+      # ── LAYER 3: Upload ZAP HTML + JSON reports ──────────────────
+      - name: Upload ZAP report
         if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
@@ -266,26 +399,6 @@ jobs:
             report_json.json
             report_md.md
           retention-days: 30
-
-      # ── Parse result for notify job ──────────────────────────────
-      - name: Save ZAP result summary
-        if: always()
-        run: |
-          mkdir -p qa-cicd-practice/reports
-          if [ -f report_json.json ]; then
-            HIGH=$(cat report_json.json | python3 -c "
-          import json,sys
-          d=json.load(sys.stdin)
-          alerts=d.get('site',[{}])[0].get('alerts',[])
-          print(sum(1 for a in alerts if a.get('riskcode') in ['3','2']))
-            " 2>/dev/null || echo "0")
-            echo "ZAP_HIGH=$HIGH" >> $GITHUB_ENV
-            echo "ZAP_RESULT=completed" >> $GITHUB_ENV
-          else
-            echo "ZAP_RESULT=no-report" >> $GITHUB_ENV
-            echo "ZAP_HIGH=0" >> $GITHUB_ENV
-          fi
-        working-directory: .
 
 ##############################################################################
 # JOB 5 — BUILD (only runs when ALL tests pass on main)
@@ -328,8 +441,7 @@ jobs:
           retention-days: 30
 
 ##############################################################################
-# JOB 6 — NOTIFY (always runs, summarises what happened)
-# Posts result to PR as a comment — now includes ZAP security summary
+# JOB 6 — NOTIFY (always runs, posts test + security summary to PR)
 ##############################################################################
   notify:
     name: "📣 Post Results"
@@ -350,16 +462,15 @@ jobs:
             const integration = '${{ needs.integration-tests.result }}';
             const e2e         = '${{ needs.e2e-tests.result }}';
             const zap         = '${{ needs.zap-security-scan.result }}';
+            const vulns       = '${{ env.VULNS_FOUND }}' || '?';
 
             const icon = s =>
-              s === 'success'  ? '✅' :
-              s === 'skipped'  ? '⏭️' :
-              s === 'failure'  ? '❌' : '⚠️';
+              s === 'success' ? '✅' :
+              s === 'skipped' ? '⏭️' :
+              s === 'failure' ? '❌' : '⚠️';
 
             const allTestsPassed = [unit, integration, e2e]
               .every(s => s === 'success' || s === 'skipped');
-
-            const zapPassed = zap === 'success' || zap === 'skipped';
 
             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
 
@@ -373,22 +484,21 @@ jobs:
               `| 🔗 Integration Tests | ${icon(integration)} ${integration}  |`,
               `| 🎭 E2E Tests         | ${icon(e2e)} ${e2e}                 |`,
               '',
-              '### 🔐 Security Scan (OWASP ZAP)',
-              '| Scan | Status |',
-              '|------|--------|',
-              `| 🔍 ZAP Baseline Scan | ${icon(zap)} ${zap} |`,
+              '### 🔐 Security Scan Results (OWASP ZAP)',
+              '| Check | Status |',
+              '|-------|--------|',
+              `| 🔍 ZAP Full Scan      | ${icon(zap)} ${zap}                    |`,
+              `| 🎯 Manual Vuln Checks | ⚠️ ${vulns} / 8 vulnerabilities found |`,
               '',
-              zapPassed
-                ? '> ℹ️ ZAP report uploaded as artifact. Check **Issues** tab for any findings.'
-                : '> ⚠️ ZAP scan encountered issues. Download the `zap-security-report` artifact for details.',
+              `> 📥 Download \`manual-security-report\` and \`zap-security-report\` artifacts for full details.`,
+              `> 🐛 Check the **Issues** tab for ZAP findings posted automatically.`,
               '',
               '---',
               allTestsPassed
-                ? '**✅ This PR is safe to merge.** All automated tests passed.'
+                ? '**✅ Safe to merge.** All automated tests passed.'
                 : '**❌ Do not merge.** Fix the failing tests before merging.',
               '',
               `[View full pipeline run →](${runUrl})`,
-              `[Download ZAP Report →](${runUrl}#artifacts)`,
             ].join('\n');
 
             await github.rest.issues.createComment({
