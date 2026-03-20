@@ -384,7 +384,6 @@ jobs:
           cmd_options: '-a -z "-config scanner.attackStrength=HIGH -config spider.postForms=true"'
           allow_issue_writing: true
           fail_action: false
-          artifact_name: 'zap-full-report'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
