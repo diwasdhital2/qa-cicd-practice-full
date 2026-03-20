@@ -396,7 +396,7 @@ jobs:
               -a \
               -T 5
           echo "✅ ZAP scan complete"
-        continue-on-error: true
+        continue-on-error: false
         working-directory: .
 
       # ── LAYER 3: Upload ZAP HTML + JSON reports ──────────────────
