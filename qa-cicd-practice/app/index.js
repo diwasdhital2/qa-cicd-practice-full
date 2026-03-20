@@ -105,7 +105,7 @@ class App {
     server.listen(port, cb);
     return server;
   }
-}
+} //jjh
 
 // ─── Validation helpers ────────────────────────────────────────────────────
 function validateProduct({ name, price, stock, category }) {

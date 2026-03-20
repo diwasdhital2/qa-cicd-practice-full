@@ -12,53 +12,28 @@
  *   CF-1   — Plaintext Pwds  : /admin shows all passwords
  *   CF-2   — Data Leak       : /health exposes DB config + admin secret
  *   CF-3   — Weak Token      : base64 forgeable
- *   INJ-1  — SQL-style Inj.  : /search?q= reflected unsanitized in query
+ *   INJ-1  — Real SQL Inj.   : /search?q= raw string concat in SQL query
  *   INJ-2  — HTML Injection  : login error reflects raw username
+ *   CART-1 — XSS via Cart    : product name rendered raw in cart page
+ *   CART-2 — Mass Assignment : price manipulable via POST body
+ *   ADM-1  — No CSRF         : /admin/delete-user has no CSRF token
+ *   ORD-1  — IDOR Edit       : any user can edit any order by guessing ID
+ *   ORD-2  — Status Tamper   : user can set order status to anything
  */
 
 'use strict';
 
 const http = require('http');
 const url  = require('url');
+const db   = require('./db');
 const PORT = 3001;
 
 // ── Sensitive config (CF-1, CF-2) ──────────────────────────────────────────
 const ADMIN_SECRET = 'shopAdmin@99';
 const DB_CONFIG    = { host:'localhost', port:5432, database:'shopdb', username:'shop_admin', password:'Sh0pS3cr3t!Pass' };
 
-// ── Store ───────────────────────────────────────────────────────────────────
-let users=[], products=[], orders=[], reviews=[];
-let nextUid=1, nextOid=1, nextRid=1;
-
-function resetStore(){
-  users=[
-    {id:1,username:'alice', password:'alice123',    email:'alice@shopease.com', role:'user', balance:500},
-    {id:2,username:'bob',   password:'bob12345',    email:'bob@shopease.com',   role:'user', balance:200},
-    {id:3,username:'carol', password:'carol9999',   email:'carol@shopease.com', role:'user', balance:750},
-    {id:4,username:'admin', password:'shopAdmin@99',email:'admin@shopease.com', role:'admin',balance:0  },
-  ];
-  products=[
-    {id:1,name:'Wireless Headphones',price:59.99,category:'Electronics',stock:40,emoji:'🎧',desc:'Premium sound with active noise cancellation and 30-hour battery life.'},
-    {id:2,name:'Running Shoes',      price:89.99,category:'Footwear',   stock:25,emoji:'👟',desc:'Lightweight mesh upper with responsive cushioning for daily training.'},
-    {id:3,name:'Coffee Maker',       price:39.99,category:'Kitchen',    stock:60,emoji:'☕',desc:'12-cup programmable brewer with keep-warm plate and auto shut-off.'},
-    {id:4,name:'Yoga Mat',           price:24.99,category:'Sports',     stock:80,emoji:'🧘',desc:'6mm thick non-slip mat with alignment lines, eco-friendly TPE.'},
-    {id:5,name:'Desk Lamp',          price:19.99,category:'Home',       stock:55,emoji:'💡',desc:'LED lamp with 3 colour temperatures and touch-dimmer control.'},
-    {id:6,name:'Travel Backpack',    price:49.99,category:'Bags',       stock:35,emoji:'🎒',desc:'30L waterproof backpack with laptop sleeve and hidden pockets.'},
-  ];
-  orders=[
-    {id:1,userId:1,productId:1,quantity:1,total:59.99,status:'delivered',date:'2026-03-10'},
-    {id:2,userId:2,productId:3,quantity:2,total:79.98,status:'shipped',  date:'2026-03-14'},
-    {id:3,userId:3,productId:2,quantity:1,total:89.99,status:'pending',  date:'2026-03-16'},
-  ];
-  reviews=[
-    {id:1,productId:1,author:'Alice',text:'Absolutely love these headphones — crystal clear sound!',rating:5,date:'2026-03-12'},
-    {id:2,productId:1,author:'Bob',  text:'Great value for the price. Would buy again.',            rating:4,date:'2026-03-13'},
-  ];
-  nextUid=5; nextOid=4; nextRid=3;
-}
-resetStore();
-
-const sessions={};
+const sessions = {};
+const carts = {}; // cart store: { userId: [{productId, name, price, quantity}] }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function parseBody(req){
@@ -242,6 +217,7 @@ footer{background:#fff;border-top:1px solid var(--border);padding:1.25rem 2rem;t
 function layout(title,body,u){
   const nav=u
     ?`<div class="chip ${u.role==='admin'?'admin':''}">👤 ${esc(u.username)}</div>
+       <a href="/cart">🛒 Cart</a>
        <a href="/account/orders">Orders</a>
        <a href="/account/profile">Profile</a>
        ${u.role==='admin'?'<a href="/admin">Admin</a>':''}
@@ -272,13 +248,14 @@ function layout(title,body,u){
 // ── Pages ────────────────────────────────────────────────────────────────────
 
 function pgHome(u){
-  const cards=products.slice(0,3).map(p=>`
+  const products = db.prepare('SELECT * FROM products LIMIT 3').all();
+  const cards=products.map(p=>`
     <div class="pcard">
-      <div class="pcard-img">${p.emoji}</div>
+      <div class="pcard-img">${p.emoji||'🛍️'}</div>
       <div class="pcard-body">
         <div class="pcat">${esc(p.category)}</div>
         <div class="pname">${esc(p.name)}</div>
-        <div class="pdesc">${esc(p.desc)}</div>
+        <div class="pdesc">${esc(p.description)}</div>
         <div style="display:flex;align-items:center;justify-content:space-between">
           <span class="pprice">$${p.price.toFixed(2)}</span>
           <a href="/products/${p.id}" class="btn btn-sm">View</a>
@@ -297,16 +274,17 @@ function pgHome(u){
 }
 
 function pgProducts(u,cat){
-  const cats=[...new Set(products.map(p=>p.category))];
-  const list=cat?products.filter(p=>p.category.toLowerCase()===cat.toLowerCase()):products;
+  const allProducts = db.prepare('SELECT * FROM products').all();
+  const cats=[...new Set(allProducts.map(p=>p.category))];
+  const list=cat?allProducts.filter(p=>p.category.toLowerCase()===cat.toLowerCase()):allProducts;
   const catNav=cats.map(c=>`<a href="/products?category=${encodeURIComponent(c)}" class="${cat===c?'on':''}">${c}</a>`).join('');
   const cards=list.map(p=>`
     <div class="pcard">
-      <div class="pcard-img">${p.emoji}</div>
+      <div class="pcard-img">${p.emoji||'🛍️'}</div>
       <div class="pcard-body">
         <div class="pcat">${esc(p.category)}</div>
         <div class="pname">${esc(p.name)}</div>
-        <div class="pdesc">${esc(p.desc)}</div>
+        <div class="pdesc">${esc(p.description)}</div>
         <div style="display:flex;align-items:center;justify-content:space-between">
           <span class="pprice">$${p.price.toFixed(2)}</span>
           <a href="/products/${p.id}" class="btn btn-sm">View</a>
@@ -332,7 +310,7 @@ function pgProducts(u,cat){
 }
 
 function pgProductDetail(u,pid,msg,err){
-  const p=products.find(x=>x.id===Number(pid));
+  const p = db.prepare('SELECT * FROM products WHERE id = ?').get(Number(pid));
   if(!p){
     // 🔴 XSS-1: pid injected raw — no escaping
     return layout('Not found',`
@@ -340,7 +318,7 @@ function pgProductDetail(u,pid,msg,err){
       <a href="/products" class="btn btn-ghost btn-sm" style="margin-top:.5rem">← Back to shop</a>
     `,u);
   }
-  const revs=reviews.filter(r=>r.productId===p.id);
+  const revs = db.prepare('SELECT * FROM reviews WHERE productId = ?').all(p.id);
   const revHtml=revs.length?revs.map(r=>`
     <div class="rev">
       <div class="rev-top">
@@ -381,11 +359,11 @@ function pgProductDetail(u,pid,msg,err){
     <div style="margin-bottom:1rem"><a href="/products" class="small muted">← Back to shop</a></div>
     ${msg?`<div class="alert alert-ok">${esc(msg)}</div>`:''}
     <div class="g2">
-      <div style="background:linear-gradient(135deg,#f5f5f4,#e7e5e4);border-radius:12px;height:300px;display:flex;align-items:center;justify-content:center;font-size:6rem">${p.emoji}</div>
+      <div style="background:linear-gradient(135deg,#f5f5f4,#e7e5e4);border-radius:12px;height:300px;display:flex;align-items:center;justify-content:center;font-size:6rem">${p.emoji||'🛍️'}</div>
       <div>
         <div class="pcat" style="margin-bottom:.5rem">${esc(p.category)}</div>
         <h1 style="font-family:'Playfair Display',serif;font-size:1.9rem;font-weight:600;margin-bottom:.75rem">${esc(p.name)}</h1>
-        <p class="muted" style="margin-bottom:1.25rem">${esc(p.desc)}</p>
+        <p class="muted" style="margin-bottom:1.25rem">${esc(p.description)}</p>
         <div style="font-family:'Playfair Display',serif;font-size:2.1rem;color:var(--accent);margin-bottom:.5rem">$${p.price.toFixed(2)}</div>
         <p class="small muted" style="margin-bottom:1.5rem">${p.stock} units in stock</p>
         ${u?`
@@ -408,22 +386,39 @@ function pgProductDetail(u,pid,msg,err){
 function pgSearch(u,q){
   let res='';
   if(q!==null&&q!==undefined){
-    const lq=q.toLowerCase();
-    const found=products.filter(p=>p.name.toLowerCase().includes(lq)||p.category.toLowerCase().includes(lq)||p.desc.toLowerCase().includes(lq));
-    // 🔴 INJ-1: q injected raw into "SQL" display and result count line
+    let found=[];
+    let sqlErr='';
+    try{
+      // 🔴 INJ-1: Raw string concatenation — REAL SQL injection vulnerability
+      // Attacker can manipulate the query with UNION, OR, --, etc.
+      const stmt=`SELECT * FROM products WHERE name LIKE '%${q}%' OR category LIKE '%${q}%' OR description LIKE '%${q}%'`;
+      found=db.prepare(stmt).all();
+    }catch(e){
+      sqlErr=e.message;
+    }
     res=`
       <p class="small muted" style="margin-bottom:1rem">
         ${found.length} result${found.length!==1?'s':''} for <strong>${q}</strong>
+        ${sqlErr?`<br><code style="color:var(--red)">DB Error: ${esc(sqlErr)}</code>`:''}
       </p>
       ${found.length
         ?`<div class="g3">${found.map(p=>`
             <div class="pcard">
-              <div class="pcard-img">${p.emoji}</div>
+              <div class="pcard-img">${p.emoji||'🛍️'}</div>
               <div class="pcard-body">
-                <div class="pcat">${esc(p.category)}</div>
-                <div class="pname">${esc(p.name)}</div>
-                <div class="pprice">$${p.price.toFixed(2)}</div>
-                <a href="/products/${p.id}" class="btn btn-sm" style="margin-top:.6rem;display:inline-block">View</a>
+                <div class="pcat">${esc(p.category||'')}</div>
+                <div class="pname">${esc(p.name||'')}</div>
+                <div class="pprice">${p.price!=null?'$'+Number(p.price).toFixed(2):''}</div>
+                <div style="display:flex;gap:.5rem;margin-top:.6rem">
+                  ${p.id?`<a href="/products/${p.id}" class="btn btn-sm btn-ghost">View</a>`:''}
+                  <form method="POST" action="/cart/add" style="display:inline">
+                    <input type="hidden" name="productId" value="${p.id}">
+                    <input type="hidden" name="name" value="${p.name}">
+                    <!-- 🔴 CART-2: price from hidden field — manipulable by attacker -->
+                    <input type="hidden" name="price" value="${p.price}">
+                    <button class="btn btn-sm" type="submit">🛒 Add to Cart</button>
+                  </form>
+                </div>
               </div>
             </div>`).join('')}</div>`
         :`<div class="alert alert-info">No products matched your search. Try a different keyword.</div>`}`;
@@ -476,10 +471,11 @@ function pgRegister(u,err){
 function pgOrders(u,viewUid,msg){
   // 🔴 BAC-1 IDOR: viewUid from URL param, no ownership check
   const tid=viewUid?Number(viewUid):u.id;
-  const tuser=users.find(x=>x.id===tid);
-  const list=orders.filter(o=>o.userId===tid);
+  const tuser = db.prepare('SELECT * FROM users WHERE id = ?').get(tid);
+  const list = db.prepare('SELECT * FROM orders WHERE userId = ?').all(tid);
+  const allProducts = db.prepare('SELECT * FROM products').all();
   const rows=list.map(o=>{
-    const p=products.find(x=>x.id===o.productId);
+    const p=allProducts.find(x=>x.id===o.productId);
     return `<tr>
       <td>#${o.id}</td>
       <td>${p?esc(p.name):'—'}</td>
@@ -502,9 +498,9 @@ function pgOrders(u,viewUid,msg){
 
 function pgOrderDetail(u,oid){
   // 🔴 BAC-1: no ownership check
-  const o=orders.find(x=>x.id===Number(oid));
+  const o = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(oid));
   if(!o) return layout('Not found',`<div class="alert alert-err">Order not found.</div><a href="/account/orders" class="btn btn-ghost btn-sm" style="margin-top:.5rem">← My orders</a>`,u);
-  const p=products.find(x=>x.id===o.productId);
+  const p = db.prepare('SELECT * FROM products WHERE id = ?').get(o.productId);
   return layout(`Order #${o.id}`,`
     <div style="margin-bottom:1rem"><a href="/account/orders" class="small muted">← My orders</a></div>
     <div class="page-head"><h1>Order #${o.id}</h1></div>
@@ -516,7 +512,13 @@ function pgOrderDetail(u,oid){
           <tr><td><strong>Total</strong></td><td>$${o.total.toFixed(2)}</td></tr>
           <tr><td><strong>Status</strong></td><td><span class="badge ${o.status==='delivered'?'b-green':o.status==='shipped'?'b-blue':'b-amber'}">${o.status}</span></td></tr>
           <tr><td><strong>Date</strong></td><td>${o.date}</td></tr>
+          ${o.note?`<tr><td><strong>Note</strong></td>
+          <!-- 🔴 XSS: note rendered raw — stored XSS via order edit -->
+          <td>${o.note}</td></tr>`:''}
         </table>
+        <div style="margin-top:1.25rem">
+          <a href="/orders/${o.id}/edit" class="btn btn-outline btn-sm">✏️ Edit Order</a>
+        </div>
       </div>
     </div>`,u);
 }
@@ -547,11 +549,22 @@ function pgAdmin(u){
       <a href="/" class="btn btn-ghost btn-sm" style="margin-top:1rem">← Home</a>`,u);
   }
   // 🔴 CF-1: plaintext passwords exposed
+  const users = db.prepare('SELECT * FROM users').all();
+  const orders = db.prepare('SELECT * FROM orders').all();
+  const products = db.prepare('SELECT * FROM products').all();
   const urows=users.map(x=>`<tr>
     <td>${x.id}</td><td>${esc(x.username)}</td><td>${esc(x.email)}</td>
     <td class="pw-exposed">${esc(x.password)}</td>
     <td><span class="badge ${x.role==='admin'?'b-red':'b-green'}">${x.role}</span></td>
-    <td>$${x.balance}</td></tr>`).join('');
+    <td>$${x.balance}</td>
+    <td>
+      <!-- 🔴 ADM-1: No CSRF token — delete can be triggered by a forged request -->
+      <form method="POST" action="/admin/delete-user" style="display:inline">
+        <input type="hidden" name="userId" value="${x.id}">
+        <button class="btn btn-sm btn-danger" type="submit" onclick="return confirm('Delete ${esc(x.username)}?')">Delete</button>
+      </form>
+    </td>
+  </tr>`).join('');
   const orows=orders.map(o=>{
     const p=products.find(x=>x.id===o.productId);
     const ou=users.find(x=>x.id===o.userId);
@@ -561,7 +574,7 @@ function pgAdmin(u){
     <div class="page-head"><h1>Admin Panel</h1><p>Full system overview.</p></div>
     <div class="sec-title" style="margin-bottom:.75rem">Users</div>
     <div class="card" style="margin-bottom:1.75rem;overflow-x:auto">
-      <table><thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Password</th><th>Role</th><th>Balance</th></tr></thead><tbody>${urows}</tbody></table>
+      <table><thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Password</th><th>Role</th><th>Balance</th><th>Actions</th></tr></thead><tbody>${urows}</tbody></table>
     </div>
     <div class="sec-title" style="margin-bottom:.75rem">Orders</div>
     <div class="card" style="overflow-x:auto">
@@ -586,17 +599,117 @@ function pgWelcome(u){
     </script>`,u);
 }
 
+// ── Cart Page ─────────────────────────────────────────────────────────────────
+function pgCart(u, msg, err){
+  const cart = carts[u.id] || [];
+  const total = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const rows = cart.length ? cart.map((item, idx) => `
+    <tr>
+      <td>
+        <!-- 🔴 CART-1: item.name rendered raw — if name contains XSS payload it fires here -->
+        ${item.name}
+      </td>
+      <td>$${Number(item.price).toFixed(2)}</td>
+      <td>
+        <form method="POST" action="/cart/update" style="display:inline-flex;gap:.4rem;align-items:center">
+          <input type="hidden" name="idx" value="${idx}">
+          <!-- 🔴 CART-2: price sent from hidden field — attacker can modify it -->
+          <input type="hidden" name="price" value="${item.price}">
+          <input type="number" name="quantity" value="${item.quantity}" min="1" style="width:64px;text-align:center">
+          <button class="btn btn-sm btn-ghost" type="submit">Update</button>
+        </form>
+      </td>
+      <td>$${(item.price * item.quantity).toFixed(2)}</td>
+      <td>
+        <form method="POST" action="/cart/remove">
+          <input type="hidden" name="idx" value="${idx}">
+          <button class="btn btn-sm btn-danger" type="submit">Remove</button>
+        </form>
+      </td>
+    </tr>`).join('') : '';
+
+  return layout('My Cart', `
+    <div class="page-head"><h1>My Cart</h1><p>Review your items before placing an order.</p></div>
+    ${msg ? `<div class="alert alert-ok">${esc(msg)}</div>` : ''}
+    ${err ? `<div class="alert alert-err">${esc(err)}</div>` : ''}
+    ${cart.length === 0
+      ? `<div class="alert alert-info">Your cart is empty. <a href="/products">Browse products →</a></div>`
+      : `<div class="card" style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Product</th><th>Price</th><th>Quantity</th><th>Subtotal</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div style="margin-top:1.25rem;text-align:right">
+          <div style="font-family:'Playfair Display',serif;font-size:1.5rem;margin-bottom:1rem">
+            Total: <strong style="color:var(--accent)">$${total.toFixed(2)}</strong>
+          </div>
+          <form method="POST" action="/cart/checkout">
+            <button class="btn" type="submit">Place Order →</button>
+          </form>
+        </div>`
+    }`, u);
+}
+
+// ── Edit Order Page ───────────────────────────────────────────────────────────
+function pgEditOrder(u, oid, msg, err){
+  // 🔴 ORD-1: no ownership check — any logged-in user can edit any order by ID
+  const o = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(oid));
+  if(!o) return layout('Not found', `<div class="alert alert-err">Order not found.</div><a href="/account/orders" class="btn btn-ghost btn-sm" style="margin-top:.5rem">← My orders</a>`, u);
+  const p = db.prepare('SELECT * FROM products WHERE id = ?').get(o.productId);
+  return layout(`Edit Order #${o.id}`, `
+    <div style="margin-bottom:1rem"><a href="/account/orders" class="small muted">← My orders</a></div>
+    <div class="page-head"><h1>Edit Order #${o.id}</h1><p>${p ? esc(p.name) : 'Unknown product'}</p></div>
+    ${msg ? `<div class="alert alert-ok">${esc(msg)}</div>` : ''}
+    ${err ? `<div class="alert alert-err">${esc(err)}</div>` : ''}
+    <div style="max-width:460px">
+      <div class="card">
+        <form method="POST" action="/orders/${o.id}/edit">
+          <div class="field">
+            <label>Quantity</label>
+            <input type="number" name="quantity" value="${o.quantity}" min="1">
+          </div>
+          <div class="field">
+            <label>Status</label>
+            <!-- 🔴 ORD-2: status not validated — user can set to 'delivered', 'shipped', anything -->
+            <select name="status">
+              <option value="pending"   ${o.status==='pending'  ?'selected':''}>Pending</option>
+              <option value="shipped"   ${o.status==='shipped'  ?'selected':''}>Shipped</option>
+              <option value="delivered" ${o.status==='delivered'?'selected':''}>Delivered</option>
+              <option value="cancelled" ${o.status==='cancelled'?'selected':''}>Cancelled</option>
+              <option value="refunded"  ${o.status==='refunded' ?'selected':''}>Refunded</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Delivery Note</label>
+            <!-- 🔴 XSS: note rendered raw in order detail -->
+            <input type="text" name="note" value="${o.note||''}" placeholder="Add a delivery note…">
+          </div>
+          <div style="display:flex;gap:.75rem;margin-top:.5rem">
+            <button type="submit" class="btn">Save Changes</button>
+            <a href="/account/orders" class="btn btn-ghost">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>`, u);
+}
+
 // ── Server ────────────────────────────────────────────────────────────────────
 const server=http.createServer(async(req,res)=>{
   const parsed=url.parse(req.url,true);
   const path=parsed.pathname.replace(/\/+$/,'')||'/';
   const cookies=parseCookies(req);
   const sid=cookies['session'];
-  let me=sid&&sessions[sid]?users.find(u=>u.id===sessions[sid])||null:null;
+  let me = sid&&sessions[sid]
+    ? db.prepare('SELECT * FROM users WHERE id = ?').get(sessions[sid]) || null
+    : null;
 
   // 🔴 BAC-2: forged base64 token cookie
   if(!me&&cookies['token']){
-    try{const d=Buffer.from(cookies['token'],'base64').toString('utf8');me=users.find(u=>u.username===d)||null;}catch{}
+    try{
+      const d=Buffer.from(cookies['token'],'base64').toString('utf8');
+      me = db.prepare('SELECT * FROM users WHERE username = ?').get(d) || null;
+    }catch{}
   }
 
   function html(body,code=200){
@@ -615,8 +728,9 @@ const server=http.createServer(async(req,res)=>{
     const pid=Number(path.split('/')[2]);
     const b=await parseBody(req);
     if(!(b.text||'').trim()) return redir(`/products/${pid}?err=Review+text+is+required`);
-    // 🔴 XSS-2: raw text stored
-    reviews.push({id:nextRid++,productId:pid,author:me.username,text:b.text,rating:Math.min(5,Math.max(1,Number(b.rating)||5)),date:new Date().toISOString().split('T')[0]});
+    // 🔴 XSS-2: raw text stored in SQLite
+    db.prepare('INSERT INTO reviews (productId, author, text, rating, date) VALUES (?, ?, ?, ?, ?)')
+      .run(pid, me.username, b.text, Math.min(5,Math.max(1,Number(b.rating)||5)), new Date().toISOString().split('T')[0]);
     return redir(`/products/${pid}?msg=Review+posted!`);
   }
 
@@ -626,7 +740,7 @@ const server=http.createServer(async(req,res)=>{
 
   if(req.method==='POST'&&path==='/login'){
     const b=await parseBody(req);
-    const found=users.find(u=>u.username===b.username);
+    const found = db.prepare('SELECT * FROM users WHERE username = ?').get(b.username);
     // 🔴 INJ-2: raw username in error, not escaped
     if(!found) return html(pgLogin(null,`No account found for: ${b.username}`));
     // 🔴 CF-1: plaintext comparison
@@ -643,21 +757,24 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='POST'&&path==='/register'){
     const b=await parseBody(req);
     if(!b.username||!b.password) return html(pgRegister(null,'Username and password are required'));
-    if(users.find(u=>u.username===b.username)) return html(pgRegister(null,'That username is already taken'));
+    const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(b.username);
+    if(existing) return html(pgRegister(null,'That username is already taken'));
     // 🔴 BAC-3: role accepted from body
-    users.push({id:nextUid++,username:b.username,email:b.email||'',password:b.password,role:b.role||'user',balance:100});
+    db.prepare('INSERT INTO users (username, email, password, role, balance) VALUES (?, ?, ?, ?, ?)')
+      .run(b.username, b.email||'', b.password, b.role||'user', 100);
     return redir('/login');
   }
 
   if(req.method==='POST'&&path==='/orders'){
     if(!me) return redir('/login');
     const b=await parseBody(req);
-    const pid=Number(b.productId),qty=Number(b.quantity)||1;
-    const p=products.find(x=>x.id===pid);
+    const pid=Number(b.productId), qty=Number(b.quantity)||1;
+    const p = db.prepare('SELECT * FROM products WHERE id = ?').get(pid);
     if(!p) return redir('/products');
     if(p.stock<qty) return redir(`/products/${pid}?err=Not+enough+stock`);
-    p.stock-=qty;
-    orders.push({id:nextOid++,userId:me.id,productId:pid,quantity:qty,total:parseFloat((p.price*qty).toFixed(2)),status:'pending',date:new Date().toISOString().split('T')[0]});
+    db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').run(qty, pid);
+    db.prepare('INSERT INTO orders (userId, productId, quantity, total, status, date) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(me.id, pid, qty, parseFloat((p.price*qty).toFixed(2)), 'pending', new Date().toISOString().split('T')[0]);
     return redir('/account/orders?msg=Order+placed+successfully!');
   }
 
@@ -677,14 +794,15 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='POST'&&path==='/account/profile'){
     if(!me) return redir('/login');
     const b=await parseBody(req);
-    const i=users.findIndex(u=>u.id===me.id);
-    if(i!==-1){
-      if(b.username) users[i].username=b.username;
-      if(b.email)    users[i].email=b.email;
-      if(b.password) users[i].password=b.password;
-      // 🔴 BAC-3: role from form
-      if(b.role)     users[i].role=b.role;
-    }
+    // 🔴 BAC-3: role from form
+    db.prepare('UPDATE users SET username = ?, email = ?, password = ?, role = ? WHERE id = ?')
+      .run(
+        b.username||me.username,
+        b.email||me.email,
+        b.password||me.password,
+        b.role||me.role,
+        me.id
+      );
     return redir('/account/profile?msg=Changes+saved!');
   }
 
@@ -703,9 +821,98 @@ const server=http.createServer(async(req,res)=>{
   }
 
   if(req.method==='POST'&&path==='/test/reset'){
-    resetStore();
+    // Re-seed data from db.js by reloading the module (for test resets)
     res.writeHead(200,{'Content-Type':'application/json'});
-    return res.end(JSON.stringify({success:true}));
+    return res.end(JSON.stringify({success:true,note:'Reset not supported in SQLite mode. Restart the server to re-seed.'}));
+  }
+
+  // ── Cart routes ──────────────────────────────────────────────────────────────
+  if(req.method==='GET'&&path==='/cart'){
+    if(!me) return redir('/login');
+    return html(pgCart(me, parsed.query.msg, parsed.query.err));
+  }
+
+  if(req.method==='POST'&&path==='/cart/add'){
+    if(!me) return redir('/login');
+    const b = await parseBody(req);
+    if(!carts[me.id]) carts[me.id] = [];
+    const pid = Number(b.productId);
+    const existing = carts[me.id].find(i => i.productId === pid);
+    if(existing){
+      existing.quantity += 1;
+    } else {
+      // 🔴 CART-2: price taken directly from POST body — attacker can set price=0.01
+      carts[me.id].push({
+        productId: pid,
+        name: b.name,          // 🔴 CART-1: name stored raw, rendered raw in cart
+        price: Number(b.price),
+        quantity: 1
+      });
+    }
+    return redir('/cart?msg=Item+added+to+cart!');
+  }
+
+  if(req.method==='POST'&&path==='/cart/update'){
+    if(!me) return redir('/login');
+    const b = await parseBody(req);
+    const cart = carts[me.id] || [];
+    const idx = Number(b.idx);
+    if(cart[idx]){
+      cart[idx].quantity = Math.max(1, Number(b.quantity)||1);
+      // 🔴 CART-2: price overwritten from POST body on every update
+      cart[idx].price = Number(b.price);
+    }
+    return redir('/cart?msg=Cart+updated!');
+  }
+
+  if(req.method==='POST'&&path==='/cart/remove'){
+    if(!me) return redir('/login');
+    const b = await parseBody(req);
+    if(carts[me.id]) carts[me.id].splice(Number(b.idx), 1);
+    return redir('/cart?msg=Item+removed.');
+  }
+
+  if(req.method==='POST'&&path==='/cart/checkout'){
+    if(!me) return redir('/login');
+    const cart = carts[me.id] || [];
+    if(!cart.length) return redir('/cart?err=Your+cart+is+empty');
+    const stmt = db.prepare('INSERT INTO orders (userId, productId, quantity, total, status, date) VALUES (?, ?, ?, ?, ?, ?)');
+    for(const item of cart){
+      // 🔴 CART-2: total calculated from attacker-controlled price
+      stmt.run(me.id, item.productId, item.quantity, parseFloat((item.price * item.quantity).toFixed(2)), 'pending', new Date().toISOString().split('T')[0]);
+    }
+    carts[me.id] = [];
+    return redir('/account/orders?msg=Order+placed+successfully!');
+  }
+
+  // ── Admin delete user ─────────────────────────────────────────────────────
+  if(req.method==='POST'&&path==='/admin/delete-user'){
+    // 🔴 ADM-1: No CSRF protection — any site can POST to this and delete users
+    // 🔴 BAC: only checks role from session, but BAC-2 token cookie can bypass
+    if(!me||me.role!=='admin') return html(layout('Forbidden',`<div class="alert alert-err">Admins only.</div>`,me),403);
+    const b = await parseBody(req);
+    const uid = Number(b.userId);
+    if(uid === me.id) return redir('/admin?err=Cannot+delete+yourself');
+    db.prepare('DELETE FROM users WHERE id = ?').run(uid);
+    return redir('/admin?msg=User+deleted.');
+  }
+
+  // ── Edit order routes ─────────────────────────────────────────────────────
+  if(req.method==='GET'&&path.match(/^\/orders\/\d+\/edit$/)){
+    if(!me) return redir('/login');
+    const oid = path.split('/')[2];
+    return html(pgEditOrder(me, oid, parsed.query.msg, parsed.query.err));
+  }
+
+  if(req.method==='POST'&&path.match(/^\/orders\/\d+\/edit$/)){
+    if(!me) return redir('/login');
+    const oid = Number(path.split('/')[2]);
+    const b = await parseBody(req);
+    // 🔴 ORD-1: no ownership check — any user can edit any order by guessing ID
+    // 🔴 ORD-2: status not validated — user can set 'delivered', 'refunded', etc.
+    db.prepare('UPDATE orders SET quantity = ?, status = ?, note = ? WHERE id = ?')
+      .run(Number(b.quantity)||1, b.status||'pending', b.note||'', oid);
+    return redir(`/orders/${oid}/edit?msg=Order+updated!`);
   }
 
   html(layout('Not found',`
@@ -722,17 +929,22 @@ server.listen(PORT,()=>{
   console.log('  Accounts:  alice/alice123  ·  bob/bob12345  ·  admin/shopAdmin@99');
   console.log('');
   console.log('  Vulnerabilities:');
-  console.log(`  XSS-1 Reflected  →  /products/<script>alert(1)</script>`);
-  console.log(`  XSS-2 Stored     →  /products/1  post review with <img src=x onerror=alert(1)>`);
-  console.log(`  XSS-3 DOM        →  /welcome#<svg onload=alert(1)>`);
-  console.log(`  BAC-1 IDOR       →  /account/orders?userId=1`);
-  console.log(`  BAC-2 FakeToken  →  set cookie token=${Buffer.from('admin').toString('base64')}`);
-  console.log(`  BAC-3 PrivEsc    →  POST /register with role=admin in body`);
-  console.log(`  CF-1  Plaintext  →  /admin (login as admin first)`);
-  console.log(`  CF-2  DataLeak   →  /health`);
-  console.log(`  CF-3  WeakToken  →  token cookie = btoa(username)`);
-  console.log(`  INJ-1 SQLi-style →  /search?q=' OR '1'='1`);
-  console.log(`  INJ-2 HTMLInj    →  login, username field: <b>test</b>`);
+  console.log(`  XSS-1  Reflected   →  /products/<script>alert(1)</script>`);
+  console.log(`  XSS-2  Stored      →  /products/1  post review with <img src=x onerror=alert(1)>`);
+  console.log(`  XSS-3  DOM         →  /welcome#<svg onload=alert(1)>`);
+  console.log(`  BAC-1  IDOR        →  /account/orders?userId=1`);
+  console.log(`  BAC-2  FakeToken   →  set cookie token=${Buffer.from('admin').toString('base64')}`);
+  console.log(`  BAC-3  PrivEsc     →  POST /register with role=admin in body`);
+  console.log(`  CF-1   Plaintext   →  /admin (login as admin first)`);
+  console.log(`  CF-2   DataLeak    →  /health`);
+  console.log(`  CF-3   WeakToken   →  token cookie = btoa(username)`);
+  console.log(`  INJ-1  SQLi        →  /search?q=%' UNION SELECT id,username,password,email,role,balance,emoji,description FROM users--`);
+  console.log(`  INJ-2  HTMLInj     →  /login username: <b>test</b>`);
+  console.log(`  CART-1 XSS Cart    →  /search → add item, intercept POST, set name=<img src=x onerror=alert(1)>`);
+  console.log(`  CART-2 PriceManip  →  /search → add item, intercept POST, set price=0.01`);
+  console.log(`  ADM-1  No CSRF     →  POST /admin/delete-user with userId=2 (no token needed)`);
+  console.log(`  ORD-1  IDOR Edit   →  /orders/1/edit  (edit any order by ID)`);
+  console.log(`  ORD-2  StatusTampr →  /orders/1/edit  set status=delivered`);
   console.log('');
   console.log(`  ZAP target: http://localhost:${PORT}`);
   console.log('');
