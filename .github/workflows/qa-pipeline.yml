@@ -46,8 +46,6 @@ defaults:
 
 ##############################################################################
 # JOB 1 — UNIT TESTS
-# Runs on: EVERY push to any branch (fastest feedback loop)
-# Fails build if: any unit test fails OR coverage drops below 80%
 ##############################################################################
 jobs:
   unit-tests:
@@ -85,8 +83,6 @@ jobs:
 
 ##############################################################################
 # JOB 2 — INTEGRATION TESTS
-# Runs on: Pull Requests and pushes to main/develop
-# Depends on: unit-tests passing first
 ##############################################################################
   integration-tests:
     name: "🔗 Integration Tests"
@@ -133,8 +129,6 @@ jobs:
 
 ##############################################################################
 # JOB 3 — E2E TESTS
-# Runs on: merges to main and nightly schedule
-# Depends on: integration-tests passing
 ##############################################################################
   e2e-tests:
     name: "🎭 E2E Tests"
@@ -179,12 +173,9 @@ jobs:
 
 ##############################################################################
 # JOB 4 — ZAP SECURITY SCAN
-# Runs on: Pull Requests, merges to main, nightly schedule
-# Depends on: integration-tests passing
-#
-# THREE LAYERS OF SCANNING:
+# THREE LAYERS:
 #   Layer 1 — Manual curl checks  : confirms known vulns (fast, reliable)
-#   Layer 2 — ZAP full active scan: authenticated crawl + attack attempts
+#   Layer 2 — ZAP Docker full scan: authenticated crawl + active attacks
 #   Layer 3 — ZAP report artifact : full HTML report for download
 ##############################################################################
   zap-security-scan:
@@ -237,8 +228,6 @@ jobs:
           curl -sf http://localhost:3001 > /dev/null || (echo "❌ App failed to start" && exit 1)
 
       # ── LAYER 1: Manual Vulnerability Checks ────────────────────
-      # Directly tests each known vulnerability using curl.
-      # Fast, reliable, and specific to your app's attack surface.
       - name: Run manual vulnerability checks
         run: |
           mkdir -p reports
@@ -374,10 +363,10 @@ jobs:
           path: qa-cicd-practice/reports/security-manual.txt
           retention-days: 30
 
-      # ── LAYER 2: ZAP Full Authenticated Scan (via Docker) ──────────
-      # Runs ZAP directly in Docker to avoid GitHub artifact API bug
-      # in zaproxy/action-full-scan. Crawls all pages and actively
-      # attempts XSS, SQLi, and other attacks.
+      # ── LAYER 2: ZAP Full Scan via Docker ───────────────────────
+      # -I flag REMOVED so ZAP exits with error code when vulns found
+      # continue-on-error: false so job fails on findings
+      # -l WARN so only medium/high alerts are reported
       - name: Pull ZAP Docker image
         run: docker pull ghcr.io/zaproxy/zaproxy:stable
 
@@ -392,14 +381,14 @@ jobs:
               -t http://localhost:3001 \
               -r zap_report.html \
               -J zap_report.json \
-              -I \
               -a \
-              -T 5
+              -T 5 \
+              -l WARN
           echo "✅ ZAP scan complete"
         continue-on-error: false
         working-directory: .
 
-      # ── LAYER 3: Upload ZAP HTML + JSON reports ──────────────────
+      # ── LAYER 3: Upload ZAP reports ──────────────────────────────
       - name: Upload ZAP report
         if: always()
         uses: actions/upload-artifact@v4.6.2
@@ -411,7 +400,7 @@ jobs:
           retention-days: 30
 
 ##############################################################################
-# JOB 5 — BUILD (only runs when ALL tests pass on main)
+# JOB 5 — BUILD
 ##############################################################################
   build:
     name: "🏗️ Build & Package"
@@ -451,7 +440,7 @@ jobs:
           retention-days: 30
 
 ##############################################################################
-# JOB 6 — NOTIFY (always runs, posts test + security summary to PR)
+# JOB 6 — NOTIFY
 ##############################################################################
   notify:
     name: "📣 Post Results"
