@@ -1,3 +1,12 @@
+##############################################################################
+#  ZAP AUTOMATION FRAMEWORK CONFIG
+#  Tells ZAP how to:
+#   1. Authenticate as alice and admin
+#   2. Crawl all pages including authenticated ones
+#   3. Actively attack with high strength
+#   4. Generate HTML + JSON reports
+##############################################################################
+
 env:
   contexts:
     - name: "ShopEase"
@@ -6,19 +15,33 @@ env:
       includePaths:
         - "http://localhost:3001.*"
       excludePaths:
+        # Never scan logout — it would kill the session mid-scan
         - "http://localhost:3001/logout"
+        # Never scan reset — it wipes the database
+        - "http://localhost:3001/test/reset"
+
+      # ── Authentication ──────────────────────────────────────────
+      # ZAP submits the login form and checks the response for
+      # "Sign out" to confirm it is logged in.
       authentication:
         method: "form"
         parameters:
-          loginPageUrl: "http://localhost:3001/login"
+          loginPageUrl:    "http://localhost:3001/login"
           loginRequestUrl: "http://localhost:3001/login"
           loginRequestBody: "username={%username%}&password={%password%}"
         verification:
-          method: "response"
-          loggedInRegex: "Sign out"
+          method:         "response"
+          loggedInRegex:  "Sign out"
           loggedOutRegex: "Sign in"
+
       sessionManagement:
         method: "cookie"
+        parameters:
+          cookieName: "session"
+
+      # ── Test Users ──────────────────────────────────────────────
+      # ZAP will scan as both alice (regular user) and admin
+      # to reach all authenticated pages
       users:
         - name: "alice"
           credentials:
@@ -29,41 +52,130 @@ env:
             username: "admin"
             password: "shopAdmin@99"
 
+  parameters:
+    failOnError:  true
+    failOnWarning: false
+    progressToStdout: true
+
 jobs:
-  # Step 1 — Spider crawl as alice to find all pages
+
+  # ── Step 1: Seed known URLs ────────────────────────────────────
+  # Tell ZAP exactly where the vulnerable pages are so it doesn't
+  # miss them during spidering (especially POST endpoints)
+  - type: requestor
+    parameters:
+      user: "alice"
+    requests:
+      - url: "http://localhost:3001/"
+      - url: "http://localhost:3001/products"
+      - url: "http://localhost:3001/products/1"
+      - url: "http://localhost:3001/products/2"
+      - url: "http://localhost:3001/search?q=test"
+      - url: "http://localhost:3001/search?q='"
+      - url: "http://localhost:3001/welcome"
+      - url: "http://localhost:3001/cart"
+      - url: "http://localhost:3001/account/orders"
+      - url: "http://localhost:3001/account/orders?userId=2"
+      - url: "http://localhost:3001/account/profile"
+      - url: "http://localhost:3001/orders/1"
+      - url: "http://localhost:3001/orders/1/edit"
+      - url: "http://localhost:3001/orders/2/edit"
+      - url: "http://localhost:3001/health"
+
+  # ── Step 2: Seed admin-only URLs ──────────────────────────────
+  - type: requestor
+    parameters:
+      user: "admin"
+    requests:
+      - url: "http://localhost:3001/admin"
+
+  # ── Step 3: Traditional spider (follows links) ────────────────
   - type: spider
     parameters:
-      context: "ShopEase"
-      user: "alice"
-      maxDuration: 2
-      maxDepth: 5
+      context:     "ShopEase"
+      user:        "alice"
+      maxDuration: 3
+      maxDepth:    10
+      acceptCookies: true
 
-  # Step 2 — Ajax spider for JavaScript-heavy pages
+  # ── Step 4: Ajax spider (finds JS-rendered content) ──────────
   - type: spiderAjax
     parameters:
-      context: "ShopEase"
-      user: "alice"
+      context:     "ShopEase"
+      user:        "alice"
       maxDuration: 2
+      browserId:   "firefox-headless"
 
-  # Step 3 — Passive scan all discovered pages
+  # ── Step 5: Passive scan all discovered pages ─────────────────
+  # Reads responses without sending any attack payloads
   - type: passiveScan-wait
     parameters:
       maxDuration: 5
 
-  # Step 4 — Active scan (actually attempts attacks)
+  # ── Step 6: Active scan as alice ──────────────────────────────
+  # Actually attempts XSS, SQLi, header injection, etc.
+  # strength=HIGH = more payloads, more thorough
   - type: activeScan
     parameters:
-      context: "ShopEase"
-      user: "alice"
-      policy: "Default Policy"
+      context:  "ShopEase"
+      user:     "alice"
+      scanners:
+        - id: 40012    # XSS Reflected
+          strength: HIGH
+          threshold: LOW
+        - id: 40014    # XSS Persistent
+          strength: HIGH
+          threshold: LOW
+        - id: 40018    # SQL Injection
+          strength: HIGH
+          threshold: LOW
+        - id: 10010    # Cookie No HttpOnly
+          strength: MEDIUM
+          threshold: LOW
+        - id: 10011    # Cookie Without Secure Flag
+          strength: MEDIUM
+          threshold: LOW
+        - id: 10020    # X-Frame-Options Missing
+          strength: MEDIUM
+          threshold: LOW
+        - id: 10021    # X-Content-Type-Options Missing
+          strength: MEDIUM
+          threshold: LOW
+        - id: 10038    # CSP Missing
+          strength: MEDIUM
+          threshold: LOW
+        - id: 90022    # App Error Disclosure
+          strength: MEDIUM
+          threshold: LOW
 
-  # Step 5 — Generate reports
+  # ── Step 7: Active scan as admin ──────────────────────────────
+  # Scans admin-only pages that alice cannot reach
+  - type: activeScan
+    parameters:
+      context:  "ShopEase"
+      user:     "admin"
+      scanners:
+        - id: 40012
+          strength: HIGH
+          threshold: LOW
+        - id: 40018
+          strength: HIGH
+          threshold: LOW
+        - id: 10010
+          strength: MEDIUM
+          threshold: LOW
+
+  # ── Step 8: Generate reports ──────────────────────────────────
   - type: report
     parameters:
-      template: "traditional-html"
-      reportFile: "report_html"
-    risks:
-      - high
-      - medium
-      - low
-      - informational
+      template:   "traditional-html"
+      reportDir:  "/zap/wrk"
+      reportFile: "zap_report"
+      reportTitle: "ShopEase Security Scan Report"
+      reportDescription: "Full authenticated ZAP scan results"
+
+  - type: report
+    parameters:
+      template:   "traditional-json"
+      reportDir:  "/zap/wrk"
+      reportFile: "zap_report"
