@@ -398,7 +398,7 @@ jobs:
               -T 5 \
               -l WARN
           echo "✅ ZAP scan complete"
-        continue-on-error: true
+        continue-on-error: false
         working-directory: .
 
       # ── LAYER 3: Upload all reports ───────────────────────────────
