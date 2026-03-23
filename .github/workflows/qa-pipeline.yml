@@ -2,25 +2,10 @@
 #  QA AUTOMATION PIPELINE
 #
 #  WHEN IT RUNS:
-#  ┌─ Every push to any branch          → Unit tests only (fast feedback)
+#  ┌─ Every push to any branch          → Unit tests + ZAP Scan (CHANGED)
 #  ├─ Every Pull Request to main/develop → Unit + Integration + ZAP Scan
 #  ├─ Every merge to main               → All tests + ZAP + build artifact
 #  └─ Nightly at 2am UTC               → Full suite including E2E + ZAP
-#
-#  BUILD RULES:
-#  ✅ All tests pass  → Build succeeds, PR can be merged
-#  ❌ Any test fails  → Build fails, PR is BLOCKED from merging
-#
-#  ZAP SCAN — THREE LAYERS:
-#  Layer 1 — Manual curl checks  : tests all 8 known vulns directly (fast)
-#  Layer 2 — ZAP authenticated   : logs in as alice+admin, active attacks
-#  Layer 3 — ZAP report artifact : full HTML + JSON report for download
-#
-#  SQL INJECTION COLUMN COUNTS (UNION must match products = 7 cols):
-#    products : 7 → id,name,price,category,stock,emoji,description
-#    users    : 6 → id,username,password,email,role,balance          + add ''
-#    orders   : 8 → id,userId,productId,quantity,total,status,date,note → use 7
-#    reviews  : 6 → id,productId,author,text,rating,date             + add ''
 ##############################################################################
 
 name: QA Automation Pipeline
@@ -28,13 +13,10 @@ name: QA Automation Pipeline
 on:
   push:
     branches: ['**']
-
   pull_request:
     branches: [main, develop]
-
   schedule:
     - cron: '0 2 * * *'
-
   workflow_dispatch:
     inputs:
       suite:
@@ -54,36 +36,27 @@ defaults:
     working-directory: qa-cicd-practice
 
 ##############################################################################
-# JOB 1 — UNIT TESTS
+# JOB 1 — UNIT TESTS (unchanged)
 ##############################################################################
 jobs:
   unit-tests:
     name: "🧪 Unit Tests"
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install dependencies
-        run: npm ci
-
+      - run: npm ci
       - name: Run unit tests
         run: |
           mkdir -p reports
           node scripts/run-tests.js unit | tee reports/unit-results.txt
           exit ${PIPESTATUS[0]}
-
-      - name: Upload test results
-        if: always()
+      - if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
           name: unit-test-results
@@ -91,35 +64,27 @@ jobs:
           retention-days: 7
 
 ##############################################################################
-# JOB 2 — INTEGRATION TESTS
+# JOB 2 — INTEGRATION TESTS (unchanged)
 ##############################################################################
   integration-tests:
     name: "🔗 Integration Tests"
     runs-on: ubuntu-latest
     needs: unit-tests
     timeout-minutes: 15
-
     if: |
       github.event_name == 'pull_request' ||
       github.ref == 'refs/heads/main'     ||
       github.ref == 'refs/heads/develop'  ||
       github.event_name == 'schedule'     ||
       github.event_name == 'workflow_dispatch'
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install dependencies
-        run: npm ci
-
+      - run: npm ci
       - name: Run integration tests
         run: |
           mkdir -p reports
@@ -127,9 +92,7 @@ jobs:
           exit ${PIPESTATUS[0]}
         env:
           NODE_ENV: test
-
-      - name: Upload integration results
-        if: always()
+      - if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
           name: integration-test-results
@@ -137,33 +100,25 @@ jobs:
           retention-days: 7
 
 ##############################################################################
-# JOB 3 — E2E TESTS
+# JOB 3 — E2E TESTS (unchanged)
 ##############################################################################
   e2e-tests:
     name: "🎭 E2E Tests"
     runs-on: ubuntu-latest
     needs: integration-tests
     timeout-minutes: 20
-
     if: |
       github.ref == 'refs/heads/main' ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install dependencies
-        run: npm ci
-
+      - run: npm ci
       - name: Run E2E tests
         run: |
           mkdir -p reports
@@ -171,9 +126,7 @@ jobs:
           exit ${PIPESTATUS[0]}
         env:
           NODE_ENV: test
-
-      - name: Upload E2E results
-        if: always()
+      - if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
           name: e2e-test-results
@@ -182,43 +135,32 @@ jobs:
 
 ##############################################################################
 # JOB 4 — ZAP SECURITY SCAN
+# CHANGED: needs unit-tests only (was: integration-tests)
+#          if condition simplified to always() — no extra trigger filter needed
+#          because the job itself is now always eligible; unit-tests is the gate
 ##############################################################################
   zap-security-scan:
     name: "🔐 ZAP Security Scan"
     runs-on: ubuntu-latest
-    needs: integration-tests
+    needs: unit-tests          # ← CHANGED: was `integration-tests`
+    if: always()               # ← CHANGED: simplified — runs whenever unit-tests runs
     timeout-minutes: 30
-
-    if: |
-      github.event_name == 'pull_request' ||
-      github.ref == 'refs/heads/main'     ||
-      github.event_name == 'schedule'     ||
-      github.event_name == 'workflow_dispatch'
-
     permissions:
       contents: read
       issues: write
       pull-requests: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - run: npm ci
 
-      - name: Install dependencies
-        run: npm ci
-
-      # ── Start the app ────────────────────────────────────────────
       - name: Start vulnerable app
         run: node app/vulnerable_webapp.js &
 
-      # ── Wait until app is responding ────────────────────────────
       - name: Wait for app to be ready
         run: |
           echo "Waiting for app on http://localhost:3001 ..."
@@ -232,13 +174,7 @@ jobs:
           done
           curl -sf http://localhost:3001 > /dev/null || (echo "❌ App failed to start" && exit 1)
 
-      # ── LAYER 1: Manual Vulnerability Checks ─────────────────────
-      #
-      # Tests all 8 known vulnerabilities directly with curl.
-      # UNION payloads use exactly 7 columns to match products table:
-      #   users(6)  → SELECT id,username,password,email,role,balance,''
-      #   orders(8) → SELECT id,userId,productId,quantity,total,status,date
-      #
+      # LAYER 1: Manual checks (unchanged)
       - name: Run manual vulnerability checks
         run: |
           mkdir -p reports
@@ -251,9 +187,6 @@ jobs:
           echo "================================================"  | tee -a $REPORT
           echo ""                                                   | tee -a $REPORT
 
-          # ── INJ-1: SQL Injection ──────────────────────────────
-          # products=7 cols, users=6 cols → add '' as 7th dummy col
-          # Payload: %' UNION SELECT id,username,password,email,role,balance,'' FROM users--
           echo "[ INJ-1 ] SQL Injection on /search ..."           | tee -a $REPORT
           SQLI=$(curl -s "http://localhost:3001/search?q=%25'%20UNION%20SELECT%20id%2Cusername%2Cpassword%2Cemail%2Crole%2Cbalance%2C''%20FROM%20users--")
           if echo "$SQLI" | grep -qi "alice123\|bob12345\|shopAdmin"; then
@@ -264,7 +197,6 @@ jobs:
           fi
           echo ""                                                   | tee -a $REPORT
 
-          # ── CF-2: Sensitive data at /health ───────────────────
           echo "[ CF-2  ] Sensitive data leak at /health ..."     | tee -a $REPORT
           HEALTH=$(curl -s "http://localhost:3001/health")
           if echo "$HEALTH" | grep -qi "Sh0pS3cr3t\|shopAdmin@99\|shop_admin"; then
@@ -275,7 +207,6 @@ jobs:
           fi
           echo ""                                                   | tee -a $REPORT
 
-          # ── BAC-2: Forged admin base64 token ──────────────────
           echo "[ BAC-2 ] Forged admin cookie ..."                | tee -a $REPORT
           ADMIN_TOKEN=$(echo -n "admin" | base64)
           ADMIN_PAGE=$(curl -s -b "token=$ADMIN_TOKEN" "http://localhost:3001/admin")
@@ -287,7 +218,6 @@ jobs:
           fi
           echo ""                                                   | tee -a $REPORT
 
-          # ── BAC-1: IDOR on orders ─────────────────────────────
           echo "[ BAC-1 ] IDOR — alice viewing bob's orders ..."  | tee -a $REPORT
           curl -s -X POST http://localhost:3001/login \
             -d "username=alice&password=alice123" \
@@ -303,7 +233,6 @@ jobs:
           fi
           echo ""                                                   | tee -a $REPORT
 
-          # ── BAC-3: Privilege escalation via register ──────────
           echo "[ BAC-3 ] Privilege escalation via /register ..." | tee -a $REPORT
           curl -s -X POST http://localhost:3001/register \
             -d "username=zaptest_hacker&password=zaptest123&email=zap@test.com&role=admin" \
@@ -321,7 +250,6 @@ jobs:
           fi
           echo ""                                                   | tee -a $REPORT
 
-          # ── INJ-2: HTML injection on login form ───────────────
           echo "[ INJ-2 ] HTML injection on /login ..."           | tee -a $REPORT
           HTMLINJ=$(curl -s -X POST http://localhost:3001/login \
             -d "username=<b>INJECTED</b>&password=wrong")
@@ -333,7 +261,6 @@ jobs:
           fi
           echo ""                                                   | tee -a $REPORT
 
-          # ── ORD-1: IDOR on order edit ─────────────────────────
           echo "[ ORD-1 ] IDOR — alice editing bob's order ..."   | tee -a $REPORT
           EDIT=$(curl -s -b /tmp/alice_cookies.txt \
             "http://localhost:3001/orders/2/edit")
@@ -345,7 +272,6 @@ jobs:
           fi
           echo ""                                                   | tee -a $REPORT
 
-          # ── HDR: Missing security headers ─────────────────────
           echo "[ HDR   ] Security headers check ..."             | tee -a $REPORT
           HEADERS=$(curl -sI "http://localhost:3001")
           MISSING=""
@@ -360,7 +286,6 @@ jobs:
           fi
           echo ""                                                   | tee -a $REPORT
 
-          # ── Summary ───────────────────────────────────────────
           echo "================================================"  | tee -a $REPORT
           echo "  TOTAL VULNERABILITIES FOUND: $VULNS_FOUND / 8"  | tee -a $REPORT
           echo "================================================"  | tee -a $REPORT
@@ -368,17 +293,14 @@ jobs:
           echo "VULNS_FOUND=$VULNS_FOUND" >> $GITHUB_ENV
           exit 0
 
-      - name: Upload manual security report
-        if: always()
+      - if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
           name: manual-security-report
           path: qa-cicd-practice/reports/security-manual.txt
           retention-days: 30
 
-      # ── LAYER 2: ZAP Authenticated Full Scan ─────────────────────
-      # chmod 777 on reports dir so ZAP Docker (runs as zap user)
-      # has permission to write report files into the mounted volume
+      # LAYER 2: ZAP Full Scan (unchanged)
       - name: Pull ZAP Docker image
         run: docker pull ghcr.io/zaproxy/zaproxy:stable
 
@@ -401,9 +323,8 @@ jobs:
         continue-on-error: false
         working-directory: .
 
-      # ── LAYER 3: Upload all reports ───────────────────────────────
-      - name: Upload ZAP report
-        if: always()
+      # LAYER 3: Upload reports (unchanged)
+      - if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
           name: zap-security-report
@@ -415,29 +336,28 @@ jobs:
 
 ##############################################################################
 # JOB 5 — BUILD
+# CHANGED: e2e-tests uses `needs` with skipped-ok — build won't block if
+#          e2e is skipped (it only runs on main, not PRs or feature branches)
 ##############################################################################
   build:
     name: "🏗️ Build & Package"
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests, e2e-tests, zap-security-scan]
     timeout-minutes: 10
-
-    if: github.ref == 'refs/heads/main'
-
+    if: >
+      github.ref == 'refs/heads/main' &&
+      needs.unit-tests.result == 'success' &&
+      needs.integration-tests.result == 'success' &&
+      needs.zap-security-scan.result == 'success' &&
+      (needs.e2e-tests.result == 'success' || needs.e2e-tests.result == 'skipped')
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install production dependencies
-        run: npm ci --omit=dev
-
+      - run: npm ci --omit=dev
       - name: Create build artifact
         run: |
           tar -czf build-${{ github.sha }}.tar.gz app/ package.json scripts/
@@ -445,30 +365,25 @@ jobs:
           echo "Git SHA: ${{ github.sha }}"
           echo "Branch:  ${{ github.ref_name }}"
           echo "Actor:   ${{ github.actor }}"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: build-${{ github.run_number }}
           path: qa-cicd-practice/build-*.tar.gz
           retention-days: 30
 
 ##############################################################################
-# JOB 6 — NOTIFY
+# JOB 6 — NOTIFY (unchanged)
 ##############################################################################
   notify:
     name: "📣 Post Results"
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests, e2e-tests, zap-security-scan]
     if: always() && github.event_name == 'pull_request'
-
     permissions:
       pull-requests: write
       issues: write
-
     steps:
-      - name: Post PR comment with test + security summary
-        uses: actions/github-script@v7.0.1
+      - uses: actions/github-script@v7.0.1
         with:
           script: |
             const unit        = '${{ needs.unit-tests.result }}';
@@ -520,3 +435,543 @@ jobs:
               repo: context.repo.repo,
               body,
             });
+
+
+
+
+
+
+
+
+
+
+
+# ##############################################################################
+# #  QA AUTOMATION PIPELINE
+# #
+# #  WHEN IT RUNS:
+# #  ┌─ Every push to any branch          → Unit tests only (fast feedback)
+# #  ├─ Every Pull Request to main/develop → Unit + Integration + ZAP Scan
+# #  ├─ Every merge to main               → All tests + ZAP + build artifact
+# #  └─ Nightly at 2am UTC               → Full suite including E2E + ZAP
+# #
+# #  BUILD RULES:
+# #  ✅ All tests pass  → Build succeeds, PR can be merged
+# #  ❌ Any test fails  → Build fails, PR is BLOCKED from merging
+# #
+# #  ZAP SCAN — THREE LAYERS:
+# #  Layer 1 — Manual curl checks  : tests all 8 known vulns directly (fast)
+# #  Layer 2 — ZAP authenticated   : logs in as alice+admin, active attacks
+# #  Layer 3 — ZAP report artifact : full HTML + JSON report for download
+# #
+# #  SQL INJECTION COLUMN COUNTS (UNION must match products = 7 cols):
+# #    products : 7 → id,name,price,category,stock,emoji,description
+# #    users    : 6 → id,username,password,email,role,balance          + add ''
+# #    orders   : 8 → id,userId,productId,quantity,total,status,date,note → use 7
+# #    reviews  : 6 → id,productId,author,text,rating,date             + add ''
+# ##############################################################################
+
+# name: QA Automation Pipeline
+
+# on:
+#   push:
+#     branches: ['**']
+
+#   pull_request:
+#     branches: [main, develop]
+
+#   schedule:
+#     - cron: '0 2 * * *'
+
+#   workflow_dispatch:
+#     inputs:
+#       suite:
+#         description: 'Test suite to run'
+#         required: false
+#         default: 'all'
+#         type: choice
+#         options: [all, unit, integration, e2e]
+
+# permissions:
+#   contents: read
+#   pull-requests: write
+#   issues: write
+
+# defaults:
+#   run:
+#     working-directory: qa-cicd-practice
+
+# ##############################################################################
+# # JOB 1 — UNIT TESTS
+# ##############################################################################
+# jobs:
+#   unit-tests:
+#     name: "🧪 Unit Tests"
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 10
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4.2.2
+#         with:
+#           token: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Setup Node.js 20
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: '20'
+
+#       - name: Install dependencies
+#         run: npm ci
+
+#       - name: Run unit tests
+#         run: |
+#           mkdir -p reports
+#           node scripts/run-tests.js unit | tee reports/unit-results.txt
+#           exit ${PIPESTATUS[0]}
+
+#       - name: Upload test results
+#         if: always()
+#         uses: actions/upload-artifact@v4.6.2
+#         with:
+#           name: unit-test-results
+#           path: qa-cicd-practice/reports/
+#           retention-days: 7
+
+# ##############################################################################
+# # JOB 2 — INTEGRATION TESTS
+# ##############################################################################
+#   integration-tests:
+#     name: "🔗 Integration Tests"
+#     runs-on: ubuntu-latest
+#     needs: unit-tests
+#     timeout-minutes: 15
+
+#     if: |
+#       github.event_name == 'pull_request' ||
+#       github.ref == 'refs/heads/main'     ||
+#       github.ref == 'refs/heads/develop'  ||
+#       github.event_name == 'schedule'     ||
+#       github.event_name == 'workflow_dispatch'
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4.2.2
+#         with:
+#           token: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Setup Node.js 20
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: '20'
+
+#       - name: Install dependencies
+#         run: npm ci
+
+#       - name: Run integration tests
+#         run: |
+#           mkdir -p reports
+#           node scripts/run-tests.js integration | tee reports/integration-results.txt
+#           exit ${PIPESTATUS[0]}
+#         env:
+#           NODE_ENV: test
+
+#       - name: Upload integration results
+#         if: always()
+#         uses: actions/upload-artifact@v4.6.2
+#         with:
+#           name: integration-test-results
+#           path: qa-cicd-practice/reports/
+#           retention-days: 7
+
+# ##############################################################################
+# # JOB 3 — E2E TESTS
+# ##############################################################################
+#   e2e-tests:
+#     name: "🎭 E2E Tests"
+#     runs-on: ubuntu-latest
+#     needs: integration-tests
+#     timeout-minutes: 20
+
+#     if: |
+#       github.ref == 'refs/heads/main' ||
+#       github.event_name == 'schedule' ||
+#       github.event_name == 'workflow_dispatch'
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4.2.2
+#         with:
+#           token: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Setup Node.js 20
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: '20'
+
+#       - name: Install dependencies
+#         run: npm ci
+
+#       - name: Run E2E tests
+#         run: |
+#           mkdir -p reports
+#           node scripts/run-tests.js e2e | tee reports/e2e-results.txt
+#           exit ${PIPESTATUS[0]}
+#         env:
+#           NODE_ENV: test
+
+#       - name: Upload E2E results
+#         if: always()
+#         uses: actions/upload-artifact@v4.6.2
+#         with:
+#           name: e2e-test-results
+#           path: qa-cicd-practice/reports/
+#           retention-days: 14
+
+# ##############################################################################
+# # JOB 4 — ZAP SECURITY SCAN
+# ##############################################################################
+#   zap-security-scan:
+#     name: "🔐 ZAP Security Scan"
+#     runs-on: ubuntu-latest
+#     needs: integration-tests
+#     timeout-minutes: 30
+
+#     if: always() && (
+#     github.event_name == 'push' ||
+#     github.event_name == 'pull_request' ||
+#     github.event_name == 'schedule' ||
+#     github.event_name == 'workflow_dispatch'
+#     )
+
+#     # if: |
+#     #   github.event_name == 'pull_request' ||
+#     #   github.ref == 'refs/heads/main'     ||
+#     #   github.event_name == 'schedule'     ||
+#     #   github.event_name == 'workflow_dispatch'
+
+#     permissions:
+#       contents: read
+#       issues: write
+#       pull-requests: write
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4.2.2
+#         with:
+#           token: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Setup Node.js 20
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: '20'
+
+#       - name: Install dependencies
+#         run: npm ci
+
+#       # ── Start the app ────────────────────────────────────────────
+#       - name: Start vulnerable app
+#         run: node app/vulnerable_webapp.js &
+
+#       # ── Wait until app is responding ────────────────────────────
+#       - name: Wait for app to be ready
+#         run: |
+#           echo "Waiting for app on http://localhost:3001 ..."
+#           for i in {1..20}; do
+#             if curl -s --fail http://localhost:3001 > /dev/null 2>&1; then
+#               echo "✅ App is up!"
+#               break
+#             fi
+#             echo "  Attempt $i/20 — retrying in 3s..."
+#             sleep 3
+#           done
+#           curl -sf http://localhost:3001 > /dev/null || (echo "❌ App failed to start" && exit 1)
+
+#       # ── LAYER 1: Manual Vulnerability Checks ─────────────────────
+#       #
+#       # Tests all 8 known vulnerabilities directly with curl.
+#       # UNION payloads use exactly 7 columns to match products table:
+#       #   users(6)  → SELECT id,username,password,email,role,balance,''
+#       #   orders(8) → SELECT id,userId,productId,quantity,total,status,date
+#       #
+#       - name: Run manual vulnerability checks
+#         run: |
+#           mkdir -p reports
+#           REPORT="reports/security-manual.txt"
+#           VULNS_FOUND=0
+
+#           echo "================================================" | tee -a $REPORT
+#           echo "  MANUAL SECURITY SCAN — $(date)"                 | tee -a $REPORT
+#           echo "  Target: http://localhost:3001"                   | tee -a $REPORT
+#           echo "================================================"  | tee -a $REPORT
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── INJ-1: SQL Injection ──────────────────────────────
+#           # products=7 cols, users=6 cols → add '' as 7th dummy col
+#           # Payload: %' UNION SELECT id,username,password,email,role,balance,'' FROM users--
+#           echo "[ INJ-1 ] SQL Injection on /search ..."           | tee -a $REPORT
+#           SQLI=$(curl -s "http://localhost:3001/search?q=%25'%20UNION%20SELECT%20id%2Cusername%2Cpassword%2Cemail%2Crole%2Cbalance%2C''%20FROM%20users--")
+#           if echo "$SQLI" | grep -qi "alice123\|bob12345\|shopAdmin"; then
+#             echo "  ⚠️  VULNERABLE — plaintext passwords leaked via UNION attack" | tee -a $REPORT
+#             VULNS_FOUND=$((VULNS_FOUND + 1))
+#           else
+#             echo "  ✅ PASS"                                       | tee -a $REPORT
+#           fi
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── CF-2: Sensitive data at /health ───────────────────
+#           echo "[ CF-2  ] Sensitive data leak at /health ..."     | tee -a $REPORT
+#           HEALTH=$(curl -s "http://localhost:3001/health")
+#           if echo "$HEALTH" | grep -qi "Sh0pS3cr3t\|shopAdmin@99\|shop_admin"; then
+#             echo "  ⚠️  VULNERABLE — DB credentials and admin secret exposed" | tee -a $REPORT
+#             VULNS_FOUND=$((VULNS_FOUND + 1))
+#           else
+#             echo "  ✅ PASS"                                       | tee -a $REPORT
+#           fi
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── BAC-2: Forged admin base64 token ──────────────────
+#           echo "[ BAC-2 ] Forged admin cookie ..."                | tee -a $REPORT
+#           ADMIN_TOKEN=$(echo -n "admin" | base64)
+#           ADMIN_PAGE=$(curl -s -b "token=$ADMIN_TOKEN" "http://localhost:3001/admin")
+#           if echo "$ADMIN_PAGE" | grep -qi "Admin Panel\|shopAdmin@99"; then
+#             echo "  ⚠️  VULNERABLE — admin access via forged base64 cookie" | tee -a $REPORT
+#             VULNS_FOUND=$((VULNS_FOUND + 1))
+#           else
+#             echo "  ✅ PASS"                                       | tee -a $REPORT
+#           fi
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── BAC-1: IDOR on orders ─────────────────────────────
+#           echo "[ BAC-1 ] IDOR — alice viewing bob's orders ..."  | tee -a $REPORT
+#           curl -s -X POST http://localhost:3001/login \
+#             -d "username=alice&password=alice123" \
+#             -c /tmp/alice_cookies.txt \
+#             -L > /dev/null
+#           IDOR=$(curl -s -b /tmp/alice_cookies.txt \
+#             "http://localhost:3001/account/orders?userId=2")
+#           if echo "$IDOR" | grep -qi "Viewing orders for\|bob"; then
+#             echo "  ⚠️  VULNERABLE — alice can view bob's orders" | tee -a $REPORT
+#             VULNS_FOUND=$((VULNS_FOUND + 1))
+#           else
+#             echo "  ✅ PASS"                                       | tee -a $REPORT
+#           fi
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── BAC-3: Privilege escalation via register ──────────
+#           echo "[ BAC-3 ] Privilege escalation via /register ..." | tee -a $REPORT
+#           curl -s -X POST http://localhost:3001/register \
+#             -d "username=zaptest_hacker&password=zaptest123&email=zap@test.com&role=admin" \
+#             -L > /dev/null
+#           curl -s -X POST http://localhost:3001/login \
+#             -d "username=zaptest_hacker&password=zaptest123" \
+#             -c /tmp/hacker_cookies.txt \
+#             -L > /dev/null
+#           PRIVESC=$(curl -s -b /tmp/hacker_cookies.txt "http://localhost:3001/admin")
+#           if echo "$PRIVESC" | grep -qi "Admin Panel"; then
+#             echo "  ⚠️  VULNERABLE — anyone can register with role=admin" | tee -a $REPORT
+#             VULNS_FOUND=$((VULNS_FOUND + 1))
+#           else
+#             echo "  ✅ PASS"                                       | tee -a $REPORT
+#           fi
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── INJ-2: HTML injection on login form ───────────────
+#           echo "[ INJ-2 ] HTML injection on /login ..."           | tee -a $REPORT
+#           HTMLINJ=$(curl -s -X POST http://localhost:3001/login \
+#             -d "username=<b>INJECTED</b>&password=wrong")
+#           if echo "$HTMLINJ" | grep -q "<b>INJECTED</b>"; then
+#             echo "  ⚠️  VULNERABLE — raw HTML reflected in login error" | tee -a $REPORT
+#             VULNS_FOUND=$((VULNS_FOUND + 1))
+#           else
+#             echo "  ✅ PASS"                                       | tee -a $REPORT
+#           fi
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── ORD-1: IDOR on order edit ─────────────────────────
+#           echo "[ ORD-1 ] IDOR — alice editing bob's order ..."   | tee -a $REPORT
+#           EDIT=$(curl -s -b /tmp/alice_cookies.txt \
+#             "http://localhost:3001/orders/2/edit")
+#           if echo "$EDIT" | grep -qi "Edit Order\|Save Changes"; then
+#             echo "  ⚠️  VULNERABLE — any user can edit any order by ID" | tee -a $REPORT
+#             VULNS_FOUND=$((VULNS_FOUND + 1))
+#           else
+#             echo "  ✅ PASS"                                       | tee -a $REPORT
+#           fi
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── HDR: Missing security headers ─────────────────────
+#           echo "[ HDR   ] Security headers check ..."             | tee -a $REPORT
+#           HEADERS=$(curl -sI "http://localhost:3001")
+#           MISSING=""
+#           echo "$HEADERS" | grep -qi "X-Frame-Options"        || MISSING="$MISSING X-Frame-Options"
+#           echo "$HEADERS" | grep -qi "X-Content-Type-Options"  || MISSING="$MISSING X-Content-Type-Options"
+#           echo "$HEADERS" | grep -qi "Content-Security-Policy" || MISSING="$MISSING Content-Security-Policy"
+#           if [ -n "$MISSING" ]; then
+#             echo "  ⚠️  VULNERABLE — missing headers:$MISSING"   | tee -a $REPORT
+#             VULNS_FOUND=$((VULNS_FOUND + 1))
+#           else
+#             echo "  ✅ PASS"                                       | tee -a $REPORT
+#           fi
+#           echo ""                                                   | tee -a $REPORT
+
+#           # ── Summary ───────────────────────────────────────────
+#           echo "================================================"  | tee -a $REPORT
+#           echo "  TOTAL VULNERABILITIES FOUND: $VULNS_FOUND / 8"  | tee -a $REPORT
+#           echo "================================================"  | tee -a $REPORT
+
+#           echo "VULNS_FOUND=$VULNS_FOUND" >> $GITHUB_ENV
+#           exit 0
+
+#       - name: Upload manual security report
+#         if: always()
+#         uses: actions/upload-artifact@v4.6.2
+#         with:
+#           name: manual-security-report
+#           path: qa-cicd-practice/reports/security-manual.txt
+#           retention-days: 30
+
+#       # ── LAYER 2: ZAP Authenticated Full Scan ─────────────────────
+#       # chmod 777 on reports dir so ZAP Docker (runs as zap user)
+#       # has permission to write report files into the mounted volume
+#       - name: Pull ZAP Docker image
+#         run: docker pull ghcr.io/zaproxy/zaproxy:stable
+
+#       - name: ZAP Full Authenticated Scan
+#         run: |
+#           mkdir -p qa-cicd-practice/reports
+#           chmod 777 qa-cicd-practice/reports
+#           docker run --rm \
+#             --network host \
+#             -v $(pwd)/qa-cicd-practice/reports:/zap/wrk:rw \
+#             ghcr.io/zaproxy/zaproxy:stable \
+#             zap-full-scan.py \
+#               -t http://localhost:3001 \
+#               -r zap_report.html \
+#               -J zap_report.json \
+#               -a \
+#               -T 5 \
+#               -l WARN
+#           echo "✅ ZAP scan complete"
+#         continue-on-error: false
+#         working-directory: .
+
+#       # ── LAYER 3: Upload all reports ───────────────────────────────
+#       - name: Upload ZAP report
+#         if: always()
+#         uses: actions/upload-artifact@v4.6.2
+#         with:
+#           name: zap-security-report
+#           path: |
+#             qa-cicd-practice/reports/zap_report.html
+#             qa-cicd-practice/reports/zap_report.json
+#             qa-cicd-practice/reports/security-manual.txt
+#           retention-days: 30
+
+# ##############################################################################
+# # JOB 5 — BUILD
+# ##############################################################################
+#   build:
+#     name: "🏗️ Build & Package"
+#     runs-on: ubuntu-latest
+#     needs: [unit-tests, integration-tests, e2e-tests, zap-security-scan]
+#     timeout-minutes: 10
+
+#     if: github.ref == 'refs/heads/main'
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4.2.2
+#         with:
+#           token: ${{ secrets.GITHUB_TOKEN }}
+
+#       - name: Setup Node.js 20
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: '20'
+
+#       - name: Install production dependencies
+#         run: npm ci --omit=dev
+
+#       - name: Create build artifact
+#         run: |
+#           tar -czf build-${{ github.sha }}.tar.gz app/ package.json scripts/
+#           echo "Build artifact created: build-${{ github.sha }}.tar.gz"
+#           echo "Git SHA: ${{ github.sha }}"
+#           echo "Branch:  ${{ github.ref_name }}"
+#           echo "Actor:   ${{ github.actor }}"
+
+#       - name: Upload build artifact
+#         uses: actions/upload-artifact@v4.6.2
+#         with:
+#           name: build-${{ github.run_number }}
+#           path: qa-cicd-practice/build-*.tar.gz
+#           retention-days: 30
+
+# ##############################################################################
+# # JOB 6 — NOTIFY
+# ##############################################################################
+#   notify:
+#     name: "📣 Post Results"
+#     runs-on: ubuntu-latest
+#     needs: [unit-tests, integration-tests, e2e-tests, zap-security-scan]
+#     if: always() && github.event_name == 'pull_request'
+
+#     permissions:
+#       pull-requests: write
+#       issues: write
+
+#     steps:
+#       - name: Post PR comment with test + security summary
+#         uses: actions/github-script@v7.0.1
+#         with:
+#           script: |
+#             const unit        = '${{ needs.unit-tests.result }}';
+#             const integration = '${{ needs.integration-tests.result }}';
+#             const e2e         = '${{ needs.e2e-tests.result }}';
+#             const zap         = '${{ needs.zap-security-scan.result }}';
+#             const vulns       = '${{ env.VULNS_FOUND }}' || '?';
+
+#             const icon = s =>
+#               s === 'success' ? '✅' :
+#               s === 'skipped' ? '⏭️' :
+#               s === 'failure' ? '❌' : '⚠️';
+
+#             const allTestsPassed = [unit, integration, e2e]
+#               .every(s => s === 'success' || s === 'skipped');
+
+#             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+
+#             const body = [
+#               `## ${allTestsPassed ? '✅ Tests Passed' : '❌ Tests Failed'} — QA Pipeline`,
+#               '',
+#               '### 🧪 Test Results',
+#               '| Suite | Status |',
+#               '|-------|--------|',
+#               `| 🧪 Unit Tests        | ${icon(unit)} ${unit}               |`,
+#               `| 🔗 Integration Tests | ${icon(integration)} ${integration}  |`,
+#               `| 🎭 E2E Tests         | ${icon(e2e)} ${e2e}                 |`,
+#               '',
+#               '### 🔐 Security Scan Results (OWASP ZAP)',
+#               '| Check | Status |',
+#               '|-------|--------|',
+#               `| 🔍 ZAP Authenticated Full Scan | ${icon(zap)} ${zap}                    |`,
+#               `| 🎯 Manual Vulnerability Checks | ⚠️ ${vulns} / 8 vulnerabilities found |`,
+#               '',
+#               '> 📥 Download `zap-security-report` artifact → open `zap_report.html` for full ZAP findings.',
+#               '> 📋 Download `manual-security-report` artifact → open `security-manual.txt` for curl check results.',
+#               '',
+#               '---',
+#               allTestsPassed
+#                 ? '**✅ Safe to merge.** All automated tests passed.'
+#                 : '**❌ Do not merge.** Fix the failing tests before merging.',
+#               '',
+#               `[View full pipeline run →](${runUrl})`,
+#             ].join('\n');
+
+#             await github.rest.issues.createComment({
+#               issue_number: context.issue.number,
+#               owner: context.repo.owner,
+#               repo: context.repo.repo,
+#               body,
+#             });
