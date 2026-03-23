@@ -133,6 +133,7 @@ function createApp() {
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
   });
+  //This is a simple health check endpoint that returns a JSON response with the status of the application, the current timestamp, and the version number. It can be used to verify that the application is running and responsive.
 
   // ── Test utility: reset state ────────────────────────────────────────────
   app.post('/test/reset', (req, res) => {
