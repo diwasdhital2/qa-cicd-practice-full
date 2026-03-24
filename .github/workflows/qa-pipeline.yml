@@ -16,156 +16,80 @@ name: QA Automation Pipeline
 
 on:
   push:
-    branches: ['**']
-
+    branches:
+      - main
+      - rojeshsecurity
+      - '**'
   pull_request:
-    branches: [main, develop]
+    branches:
+      - main
 
-  schedule:
-    - cron: '0 2 * * *'
-
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-
-defaults:
-  run:
-    working-directory: qa-cicd-practice
-
-##############################################################################
-# JOB 1 — UNIT TESTS
-##############################################################################
 jobs:
-  unit-tests:
-    name: "🧪 Unit Tests"
+  qa-tests:
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - run: npm ci
-
-      - run: |
-          mkdir -p reports
-          node scripts/run-tests.js unit | tee reports/unit-results.txt
-          exit ${PIPESTATUS[0]}
-
-##############################################################################
-# JOB 2 — INTEGRATION TESTS
-##############################################################################
-  integration-tests:
-    name: "🔗 Integration Tests"
-    runs-on: ubuntu-latest
-    needs: unit-tests
-
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'pull_request' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: qa-cicd-practice
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 18
 
-      - run: npm ci
+      - name: Install dependencies
+        run: npm install
 
-      - run: |
-          mkdir -p reports
-          node scripts/run-tests.js integration | tee reports/integration-results.txt
-          exit ${PIPESTATUS[0]}
-
-##############################################################################
-# JOB 3 — E2E TESTS
-##############################################################################
-  e2e-tests:
-    name: "🎭 E2E Tests"
-    runs-on: ubuntu-latest
-    needs: integration-tests
-
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - run: npm ci
-
-      - run: |
-          mkdir -p reports
-          node scripts/run-tests.js e2e | tee reports/e2e-results.txt
-          exit ${PIPESTATUS[0]}
-
-##############################################################################
-# JOB 4 — ZAP SECURITY SCAN (FIXED)
-##############################################################################
-  zap-security-scan:
-    name: "🔐 ZAP Security Scan"
-    runs-on: ubuntu-latest
-    needs: integration-tests
-
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'pull_request' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - run: npm ci
-
-      # 🔹 Debug working directory
-      - name: Debug path
-        run: |
-          echo "PWD: $(pwd)"
-          ls -la
-
-      # 🔹 Start app
+      # -----------------------
+      # START APPLICATION
+      # -----------------------
       - name: Start app
-        run: node app/vulnerable_webapp.js &
-
-      # 🔹 Wait for app
-      - name: Wait for app
         run: |
-          for i in {1..20}; do
-            if curl -s http://localhost:3001 > /dev/null; then
-              echo "App is up"
-              break
-            fi
-            sleep 3
-          done
+          node vulnerable_server.js &
+          sleep 10
 
-      # 🔹 Create reports folder
-      - name: Create reports directory
+      - name: Verify app is running
+        run: curl -v http://localhost:3001
+
+      # -----------------------
+      # UNIT TESTS
+      # -----------------------
+      - name: Run Unit Tests
+        run: |
+          mkdir -p reports
+          node scripts/run-tests.js unit | tee reports/unit.txt
+          exit ${PIPESTATUS[0]}
+
+      # -----------------------
+      # INTEGRATION TESTS
+      # -----------------------
+      - name: Run Integration Tests
+        run: |
+          node scripts/run-tests.js integration | tee reports/integration.txt
+          exit ${PIPESTATUS[0]}
+
+      # -----------------------
+      # E2E TESTS
+      # -----------------------
+      - name: Run E2E Tests
+        run: |
+          node scripts/run-tests.js e2e | tee reports/e2e.txt
+          exit ${PIPESTATUS[0]}
+
+      # -----------------------
+      # ZAP SECURITY SCAN
+      # -----------------------
+      - name: Create reports folder
         run: mkdir -p reports
 
-      # 🔹 Pull ZAP
       - name: Pull ZAP Docker image
         run: docker pull ghcr.io/zaproxy/zaproxy:stable
 
-      # 🔹 Run ZAP Scan (FIXED PATH)
-      - name: Run ZAP Full Scan
+      - name: Run ZAP Scan
         run: |
           docker run --rm \
             --network host \
@@ -175,75 +99,28 @@ jobs:
               -t http://localhost:3001 \
               -r zap_report.html \
               -J zap_report.json \
-              -a \
+              -I \
               -T 5 \
               -l WARN
 
-      # 🔹 Verify reports
-      - name: Verify reports
+      # -----------------------
+      # DEBUG REPORTS
+      # -----------------------
+      - name: Check reports
         run: |
-          echo "Checking reports folder"
+          echo "Current directory:"
+          pwd
+          echo "Files:"
           ls -la reports
 
-      # 🔹 Upload reports
+      # -----------------------
+      # UPLOAD ARTIFACTS
+      # -----------------------
       - name: Upload ZAP report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zap-security-report
           path: |
-            reports/zap_report.html
-            reports/zap_report.json
-          retention-days: 30
-
-##############################################################################
-# JOB 5 — BUILD
-##############################################################################
-  build:
-    name: "🏗️ Build & Package"
-    runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, e2e-tests, zap-security-scan]
-
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - run: npm ci --omit=dev
-
-      - run: |
-          tar -czf build.tar.gz app/ package.json scripts/
-
-##############################################################################
-# JOB 6 — NOTIFY
-##############################################################################
-  notify:
-    name: "📣 Post Results"
-    runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, e2e-tests, zap-security-scan]
-
-    if: always() && github.event_name == 'pull_request'
-
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            const body = `
-            ## QA Pipeline Results
-
-            Unit: ${{ needs.unit-tests.result }}
-            Integration: ${{ needs.integration-tests.result }}
-            E2E: ${{ needs.e2e-tests.result }}
-            ZAP: ${{ needs.zap-security-scan.result }}
-            `;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            });
+            qa-cicd-practice/reports/zap_report.html
+            qa-cicd-practice/reports/zap_report.json
