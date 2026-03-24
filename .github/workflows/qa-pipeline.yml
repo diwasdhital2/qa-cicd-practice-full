@@ -25,13 +25,6 @@ on:
     - cron: '0 2 * * *'
 
   workflow_dispatch:
-    inputs:
-      suite:
-        description: 'Test suite to run'
-        required: false
-        default: 'all'
-        type: choice
-        options: [all, unit, integration, e2e]
 
 permissions:
   contents: read
@@ -65,14 +58,13 @@ jobs:
           exit ${PIPESTATUS[0]}
 
 ##############################################################################
-# JOB 2 — INTEGRATION TESTS (FIXED)
+# JOB 2 — INTEGRATION TESTS
 ##############################################################################
   integration-tests:
     name: "🔗 Integration Tests"
     runs-on: ubuntu-latest
     needs: unit-tests
 
-    # ✅ FIX: run on push + PR + others
     if: |
       github.event_name == 'push' ||
       github.event_name == 'pull_request' ||
@@ -94,14 +86,13 @@ jobs:
           exit ${PIPESTATUS[0]}
 
 ##############################################################################
-# JOB 3 — E2E TESTS (FIXED)
+# JOB 3 — E2E TESTS
 ##############################################################################
   e2e-tests:
     name: "🎭 E2E Tests"
     runs-on: ubuntu-latest
     needs: integration-tests
 
-    # ✅ FIX: allow push execution
     if: |
       github.event_name == 'push' ||
       github.event_name == 'schedule' ||
@@ -129,7 +120,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: integration-tests
 
-    # ✅ FIX: run on push + PR + all triggers
     if: |
       github.event_name == 'push' ||
       github.event_name == 'pull_request' ||
@@ -145,25 +135,66 @@ jobs:
 
       - run: npm ci
 
+      # 🔹 Debug working directory
+      - name: Debug path
+        run: |
+          echo "PWD: $(pwd)"
+          ls -la
+
+      # 🔹 Start app
       - name: Start app
         run: node app/vulnerable_webapp.js &
 
+      # 🔹 Wait for app
       - name: Wait for app
         run: |
           for i in {1..20}; do
-            curl -s http://localhost:3001 && break
+            if curl -s http://localhost:3001 > /dev/null; then
+              echo "App is up"
+              break
+            fi
             sleep 3
           done
 
-      - name: Run ZAP Scan
+      # 🔹 Create reports folder
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      # 🔹 Pull ZAP
+      - name: Pull ZAP Docker image
+        run: docker pull ghcr.io/zaproxy/zaproxy:stable
+
+      # 🔹 Run ZAP Scan (FIXED PATH)
+      - name: Run ZAP Full Scan
         run: |
-          docker pull ghcr.io/zaproxy/zaproxy:stable
-          docker run --rm --network host \
-            -v $(pwd)/qa-cicd-practice/reports:/zap/wrk \
+          docker run --rm \
+            --network host \
+            -v $(pwd)/reports:/zap/wrk:rw \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-full-scan.py \
-            -t http://localhost:3001 \
-            -r zap_report.html
+              -t http://localhost:3001 \
+              -r zap_report.html \
+              -J zap_report.json \
+              -a \
+              -T 5 \
+              -l WARN
+
+      # 🔹 Verify reports
+      - name: Verify reports
+        run: |
+          echo "Checking reports folder"
+          ls -la reports
+
+      # 🔹 Upload reports
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-security-report
+          path: |
+            reports/zap_report.html
+            reports/zap_report.json
+          retention-days: 30
 
 ##############################################################################
 # JOB 5 — BUILD
@@ -201,7 +232,9 @@ jobs:
       - uses: actions/github-script@v7
         with:
           script: |
-            const results = `
+            const body = `
+            ## QA Pipeline Results
+
             Unit: ${{ needs.unit-tests.result }}
             Integration: ${{ needs.integration-tests.result }}
             E2E: ${{ needs.e2e-tests.result }}
@@ -212,5 +245,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: results
+              body
             });
