@@ -740,7 +740,7 @@ const server=http.createServer(async(req,res)=>{
 
   if(req.method==='POST'&&path==='/login'){
     const b=await parseBody(req);
-    const found = db.prepare('SELECT * FROM users WHERE username = ?').get(b.username);
+    const found = db.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').get(b.username);
     // 🔴 INJ-2: raw username in error, not escaped
     if(!found) return html(pgLogin(null,`No account found for: ${b.username}`));
     // 🔴 CF-1: plaintext comparison
@@ -757,7 +757,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='POST'&&path==='/register'){
     const b=await parseBody(req);
     if(!b.username||!b.password) return html(pgRegister(null,'Username and password are required'));
-    const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(b.username);
+    const existing = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(b.username);
     if(existing) return html(pgRegister(null,'That username is already taken'));
     // 🔴 BAC-3: role accepted from body
     db.prepare('INSERT INTO users (username, email, password, role, balance) VALUES (?, ?, ?, ?, ?)')
