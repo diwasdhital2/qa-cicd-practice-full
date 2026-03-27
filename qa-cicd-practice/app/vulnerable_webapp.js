@@ -439,11 +439,27 @@ function pgLogin(u,err){
       <div class="page-head"><h1>Welcome back</h1><p>Sign in to your ShopEase account.</p></div>
       <div class="card">
         ${err?`<div class="alert alert-err">${err}</div>`:''}
-        <form method="POST" action="/login">
-          <div class="field"><label>Username</label><input type="text" name="username" placeholder="Your username" autocomplete="username"></div>
-          <div class="field"><label>Password</label><input type="password" name="password" placeholder="Your password" autocomplete="current-password"></div>
-          <button type="submit" class="btn" style="width:100%">Sign in</button>
+        <form method="POST" action="/login" id="loginForm">
+          <div class="field"><label>Username</label><input type="text" id="loginUsername" name="username" placeholder="Your username" autocomplete="username" required></div>
+          <div class="field"><label>Password</label><input type="password" id="loginPassword" name="password" placeholder="Your password" autocomplete="current-password" required></div>
+          <button type="submit" id="loginBtn" class="btn" style="width:100%;opacity:.5;cursor:not-allowed" disabled>Sign in</button>
         </form>
+        <script>
+          (function(){
+            const u=document.getElementById('loginUsername');
+            const p=document.getElementById('loginPassword');
+            const btn=document.getElementById('loginBtn');
+            function check(){
+              const ok=u.value.trim()!==''&&p.value.trim()!=='';
+              btn.disabled=!ok;
+              btn.style.opacity=ok?'1':'.5';
+              btn.style.cursor=ok?'pointer':'not-allowed';
+            }
+            u.addEventListener('input',check);
+            p.addEventListener('input',check);
+            check(); // run on load so button is disabled if fields are empty (e.g. after failed login)
+          })();
+        </script>
         <p class="small muted" style="text-align:center;margin-top:1rem">No account? <a href="/register">Register free</a></p>
       </div>
     </div>`,u);
@@ -718,6 +734,8 @@ const server=http.createServer(async(req,res)=>{
     res.end(body);
   }
   function redir(to){res.writeHead(302,{Location:to});res.end();}
+  function isApi(){return (req.headers['accept']||'').includes('application/json')||(req.headers['content-type']||'').includes('application/json');}
+  function json(obj,code=200){res.writeHead(code,{'Content-Type':'application/json'});res.end(JSON.stringify(obj,null,2));}
 
   if(req.method==='GET'&&path==='/') return html(pgHome(me));
   if(req.method==='GET'&&path==='/products') return html(pgProducts(me,parsed.query.category||null));
@@ -736,18 +754,32 @@ const server=http.createServer(async(req,res)=>{
 
   if(req.method==='GET'&&path==='/search') return html(pgSearch(me,parsed.query.q!==undefined?parsed.query.q:null));
   if(req.method==='GET'&&path==='/welcome') return html(pgWelcome(me));
-  if(req.method==='GET'&&path==='/login') return html(pgLogin(me,null));
+  if(req.method==='GET'&&path==='/login') return html(pgLogin(me, parsed.query.err||null));
 
   if(req.method==='POST'&&path==='/login'){
     const b=await parseBody(req);
+    if(!(b.username||'').trim()||!(b.password||'').trim()){
+      if(isApi()) return json({success:false,error:'Username and password are required.'},400);
+      return redir('/login?err=Username+and+password+are+required.');
+    }
     const found = db.prepare('SELECT * FROM users WHERE username = ?').get(b.username);
     // 🔴 INJ-2: raw username in error, not escaped
-    if(!found) return html(pgLogin(null,`No account found for: ${b.username}`));
+    if(!found){
+      if(isApi()) return json({success:false,error:`No account found for: ${b.username}`},401);
+      return redir('/login?err='+encodeURIComponent('No account found for: '+b.username));
+    }
     // 🔴 CF-1: plaintext comparison
-    if(found.password!==b.password) return html(pgLogin(null,`Incorrect password for: ${esc(b.username)}`));
+    if(found.password!==b.password){
+      if(isApi()) return json({success:false,error:`Incorrect password for: ${b.username}`},401);
+      return redir('/login?err='+encodeURIComponent('Incorrect password for: '+b.username));
+    }
     const ns=Math.random().toString(36).slice(2)+Date.now().toString(36);
     sessions[ns]=found.id;
     // 🔴 CF-3: weak token cookie, no HttpOnly, no Secure
+    if(isApi()){
+      res.writeHead(200,{'Content-Type':'application/json','Set-Cookie':[`session=${ns};Path=/`,`token=${tok(found.username)};Path=/`]});
+      return res.end(JSON.stringify({success:true,message:'Login successful',user:{id:found.id,username:found.username,email:found.email,role:found.role},session:ns,token:tok(found.username)},null,2));
+    }
     res.writeHead(302,{'Set-Cookie':[`session=${ns};Path=/`,`token=${tok(found.username)};Path=/`],Location:'/'});
     return res.end();
   }
@@ -756,31 +788,56 @@ const server=http.createServer(async(req,res)=>{
 
   if(req.method==='POST'&&path==='/register'){
     const b=await parseBody(req);
-    if(!b.username||!b.password) return html(pgRegister(null,'Username and password are required'));
+    if(!b.username||!b.password){
+      if(isApi()) return json({success:false,error:'Username and password are required'},400);
+      return html(pgRegister(null,'Username and password are required'));
+    }
     const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(b.username);
-    if(existing) return html(pgRegister(null,'That username is already taken'));
+    if(existing){
+      if(isApi()) return json({success:false,error:'That username is already taken'},409);
+      return html(pgRegister(null,'That username is already taken'));
+    }
     // 🔴 BAC-3: role accepted from body
-    db.prepare('INSERT INTO users (username, email, password, role, balance) VALUES (?, ?, ?, ?, ?)')
+    const result = db.prepare('INSERT INTO users (username, email, password, role, balance) VALUES (?, ?, ?, ?, ?)')
       .run(b.username, b.email||'', b.password, b.role||'user', 100);
+    if(isApi()) return json({success:true,message:'Account created successfully',userId:result.lastInsertRowid},201);
     return redir('/login');
   }
 
   if(req.method==='POST'&&path==='/orders'){
-    if(!me) return redir('/login');
+    if(!me){
+      if(isApi()) return json({success:false,error:'Unauthorized — please login'},401);
+      return redir('/login');
+    }
     const b=await parseBody(req);
     const pid=Number(b.productId), qty=Number(b.quantity)||1;
     const p = db.prepare('SELECT * FROM products WHERE id = ?').get(pid);
-    if(!p) return redir('/products');
-    if(p.stock<qty) return redir(`/products/${pid}?err=Not+enough+stock`);
+    if(!p){
+      if(isApi()) return json({success:false,error:'Product not found'},404);
+      return redir('/products');
+    }
+    if(p.stock<qty){
+      if(isApi()) return json({success:false,error:'Not enough stock'},400);
+      return redir(`/products/${pid}?err=Not+enough+stock`);
+    }
     db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').run(qty, pid);
-    db.prepare('INSERT INTO orders (userId, productId, quantity, total, status, date) VALUES (?, ?, ?, ?, ?, ?)')
+    const result = db.prepare('INSERT INTO orders (userId, productId, quantity, total, status, date) VALUES (?, ?, ?, ?, ?, ?)')
       .run(me.id, pid, qty, parseFloat((p.price*qty).toFixed(2)), 'pending', new Date().toISOString().split('T')[0]);
+    if(isApi()) return json({success:true,message:'Order placed successfully',orderId:result.lastInsertRowid,product:p.name,quantity:qty,total:parseFloat((p.price*qty).toFixed(2))},201);
     return redir('/account/orders?msg=Order+placed+successfully!');
   }
 
   if(req.method==='GET'&&path==='/account/orders'){
-    if(!me) return redir('/login');
+    if(!me){
+      if(isApi()) return json({success:false,error:'Unauthorized — please login'},401);
+      return redir('/login');
+    }
     // 🔴 BAC-1: userId from URL
+    if(isApi()){
+      const tid=parsed.query.userId?Number(parsed.query.userId):me.id;
+      const orders=db.prepare('SELECT * FROM orders WHERE userId = ?').all(tid);
+      return json({success:true,orders});
+    }
     return html(pgOrders(me,parsed.query.userId,parsed.query.msg));
   }
 
@@ -792,7 +849,10 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&path==='/account/profile'){if(!me) return redir('/login');return html(pgProfile(me,parsed.query.msg));}
 
   if(req.method==='POST'&&path==='/account/profile'){
-    if(!me) return redir('/login');
+    if(!me){
+      if(isApi()) return json({success:false,error:'Unauthorized — please login'},401);
+      return redir('/login');
+    }
     const b=await parseBody(req);
     // 🔴 BAC-3: role from form
     db.prepare('UPDATE users SET username = ?, email = ?, password = ?, role = ? WHERE id = ?')
@@ -803,6 +863,7 @@ const server=http.createServer(async(req,res)=>{
         b.role||me.role,
         me.id
       );
+    if(isApi()) return json({success:true,message:'Profile updated successfully'});
     return redir('/account/profile?msg=Changes+saved!');
   }
 
@@ -816,6 +877,10 @@ const server=http.createServer(async(req,res)=>{
 
   if(req.method==='GET'&&path==='/logout'){
     if(sid) delete sessions[sid];
+    if(isApi()){
+      res.writeHead(200,{'Content-Type':'application/json','Set-Cookie':['session=;Path=/;Max-Age=0','token=;Path=/;Max-Age=0']});
+      return res.end(JSON.stringify({success:true,message:'Logged out successfully'},null,2));
+    }
     res.writeHead(302,{'Set-Cookie':['session=;Path=/;Max-Age=0','token=;Path=/;Max-Age=0'],Location:'/'});
     return res.end();
   }
@@ -849,6 +914,7 @@ const server=http.createServer(async(req,res)=>{
         quantity: 1
       });
     }
+    if(isApi()) return json({success:true,message:'Item added to cart',cart:carts[me.id]});
     return redir('/cart?msg=Item+added+to+cart!');
   }
 
@@ -882,6 +948,7 @@ const server=http.createServer(async(req,res)=>{
       stmt.run(me.id, item.productId, item.quantity, parseFloat((item.price * item.quantity).toFixed(2)), 'pending', new Date().toISOString().split('T')[0]);
     }
     carts[me.id] = [];
+    if(isApi()) return json({success:true,message:'Order placed successfully'});
     return redir('/account/orders?msg=Order+placed+successfully!');
   }
 
@@ -894,6 +961,7 @@ const server=http.createServer(async(req,res)=>{
     const uid = Number(b.userId);
     if(uid === me.id) return redir('/admin?err=Cannot+delete+yourself');
     db.prepare('DELETE FROM users WHERE id = ?').run(uid);
+    if(isApi()) return json({success:true,message:`User ${uid} deleted successfully`});
     return redir('/admin?msg=User+deleted.');
   }
 
@@ -912,6 +980,7 @@ const server=http.createServer(async(req,res)=>{
     // 🔴 ORD-2: status not validated — user can set 'delivered', 'refunded', etc.
     db.prepare('UPDATE orders SET quantity = ?, status = ?, note = ? WHERE id = ?')
       .run(Number(b.quantity)||1, b.status||'pending', b.note||'', oid);
+    if(isApi()) return json({success:true,message:'Order updated successfully',orderId:oid});
     return redir(`/orders/${oid}/edit?msg=Order+updated!`);
   }
 
