@@ -22,6 +22,19 @@
  *   BAC-2  — Weak base64 token cookie removed; replaced with JWT Bearer auth
  *   CF-3   — Weak token replaced with signed JWT (HS256)
  *
+ * SIGNUP FIXES (v2):
+ *   FIX-1  — Max 16 characters enforced on username, password, email fields
+ *   FIX-2  — Email format validated (must match abc@domain.tld pattern)
+ *   FIX-3  — Duplicate email address rejected
+ *   FIX-4  — Weak password rejected (min 5 chars, at least 1 letter + 1 digit)
+ *   FIX-5  — Username must contain only alphanumeric characters
+ *   FIX-6  — Empty fields are rejected
+ *
+ * LOGIN FIXES (v3):
+ *   FIX-L1 — Username lookup is case-insensitive (Alice == alice == ALICE)
+ *   FIX-L2 — Generic error message shown ("Invalid username or password.")
+ *   FIX-L3 — Leading/trailing whitespace stripped from login username field
+ *
  * Authentication flow:
  *   1. POST /login  → returns { token: "Bearer eyJ..." }
  *   2. API clients  → send  Authorization: Bearer <token>  on every request
@@ -37,8 +50,6 @@ const jwt     = require('jsonwebtoken');
 const PORT    = 3001;
 
 // ── JWT config ───────────────────────────────────────────────────────────────
-// In production move JWT_SECRET to an environment variable, e.g.:
-//   const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_SECRET  = 'shopease-jwt-secret-change-me';
 const JWT_EXPIRES = '24h';
 
@@ -48,6 +59,54 @@ const DB_CONFIG    = { host:'localhost', port:5432, database:'shopdb', username:
 
 const sessions = {};
 const carts    = {};
+
+// ── Signup validation constants ──────────────────────────────────────────────
+const MAX_FIELD_LENGTH = 16;
+
+// ── Signup validation helper ─────────────────────────────────────────────────
+/**
+ * validateRegistration — runs all 6 signup checks.
+ * Returns an array of error strings (empty = valid).
+ */
+function validateRegistration(username, email, password) {
+  const errors = [];
+
+  // FIX-6: Empty fields
+  if (!username || !username.trim()) errors.push('Username is required.');
+  if (!email    || !email.trim())    errors.push('Email is required.');
+  if (!password || !password.trim()) errors.push('Password is required.');
+
+  // Stop early if any field is empty — remaining checks would be noise
+  if (errors.length) return errors;
+
+  // FIX-1: Max 16 characters
+  if (username.length > MAX_FIELD_LENGTH)
+    errors.push(`Username must be ${MAX_FIELD_LENGTH} characters or fewer (you entered ${username.length}).`);
+  if (email.length > MAX_FIELD_LENGTH)
+    errors.push(`Email must be ${MAX_FIELD_LENGTH} characters or fewer (you entered ${email.length}).`);
+  if (password.length > MAX_FIELD_LENGTH)
+    errors.push(`Password must be ${MAX_FIELD_LENGTH} characters or fewer (you entered ${password.length}).`);
+
+  // FIX-5: Username — alphanumeric only
+  if (username && !/^[a-zA-Z0-9]+$/.test(username))
+    errors.push('Username may only contain letters and numbers (no spaces or special characters).');
+
+  // FIX-2: Email format — must be something@domain.tld
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))
+    errors.push('Please enter a valid email address (e.g. you@example.com).');
+
+  // FIX-4: Password strength — min 5 chars, at least 1 letter, at least 1 digit
+  if (password) {
+    const pwErrors = [];
+    if (password.length < 5)            pwErrors.push('at least 5 characters');
+    if (!/[a-zA-Z]/.test(password))     pwErrors.push('at least one letter');
+    if (!/[0-9]/.test(password))        pwErrors.push('at least one number');
+    if (pwErrors.length)
+      errors.push(`Password is too weak — it must contain ${pwErrors.join(', ')}.`);
+  }
+
+  return errors;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function parseBody(req) {
@@ -86,10 +145,6 @@ function esc(s) {
 
 function stars(n) { return '★'.repeat(n) + '☆'.repeat(5 - n); }
 
-/**
- * extractBearer — parse and verify the Authorization: Bearer <token> header.
- * Returns the decoded JWT payload on success, or null if missing/invalid.
- */
 function extractBearer(req) {
   const auth = (req.headers['authorization'] || '').trim();
   if (!auth.startsWith('Bearer ')) return null;
@@ -100,10 +155,6 @@ function extractBearer(req) {
   }
 }
 
-/**
- * issueToken — sign a JWT for the given user record.
- * Returns the full "Bearer eyJ..." string ready to send to the client.
- */
 function issueToken(user) {
   const payload = { id: user.id, username: user.username, role: user.role };
   return 'Bearer ' + jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
@@ -156,6 +207,7 @@ nav a:hover{background:#f5f5f4;color:var(--ink);text-decoration:none}
 .pprice{font-family:'Playfair Display',serif;font-size:1.25rem;color:var(--accent)}
 .field{margin-bottom:1rem}
 .field label{display:block;font-size:.8rem;font-weight:700;color:var(--ink2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
+.field .hint{font-size:.74rem;color:var(--ink3);margin-top:3px}
 input,textarea,select{width:100%;background:#fafaf9;border:1.5px solid var(--border);border-radius:7px;color:var(--ink);font-family:'Nunito',sans-serif;font-size:.9rem;padding:.55rem .85rem;outline:none;transition:border-color .2s,box-shadow .2s}
 input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(15,118,110,.1)}
 textarea{resize:vertical;min-height:95px}
@@ -175,6 +227,8 @@ textarea{resize:vertical;min-height:95px}
 .alert-ok  {background:var(--green-bg);border-color:var(--green-bd);color:#15803d}
 .alert-err {background:var(--red-bg);  border-color:var(--red-bd);  color:#991b1b}
 .alert-info{background:var(--blue-bg); border-color:var(--blue-bd); color:#1d4ed8}
+.alert ul{margin:.4rem 0 0 1.2rem;padding:0}
+.alert ul li{margin-bottom:.2rem}
 table{width:100%;border-collapse:collapse;font-size:.875rem}
 th{background:#f5f5f4;padding:.55rem .9rem;text-align:left;font-size:.74rem;text-transform:uppercase;letter-spacing:.5px;color:var(--ink2);border-bottom:2px solid var(--border);font-weight:700}
 td{padding:.65rem .9rem;border-bottom:1px solid var(--border);color:var(--ink)}
@@ -215,6 +269,9 @@ footer{background:#fff;border-top:1px solid var(--border);padding:1.25rem 2rem;t
 .qty-row{display:flex;gap:.75rem;align-items:center;margin-top:1.5rem}
 .qty-row input{width:72px;text-align:center}
 .pw-exposed{font-family:monospace;color:var(--red);font-size:.875rem}
+/* char counter */
+.char-counter{font-size:.72rem;text-align:right;margin-top:2px;color:var(--ink3)}
+.char-counter.over{color:var(--red);font-weight:700}
 </style>`;
 
 // ── Layout ───────────────────────────────────────────────────────────────────
@@ -467,23 +524,96 @@ function pgLogin(u, err) {
     </div>`, u);
 }
 
-function pgRegister(u, err) {
+// ── Register page — all 6 fixes applied ──────────────────────────────────────
+function pgRegister(u, errors, prefill) {
+  const errBlock = (errors && errors.length)
+    ? `<div class="alert alert-err">
+         <strong>Please fix the following:</strong>
+         <ul>${errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>
+       </div>`
+    : '';
+
+  const pf = prefill || {};
+
   return layout('Register', `
     <div style="max-width:420px;margin:3rem auto">
       <div class="page-head"><h1>Create account</h1><p>Join ShopEase — it's free.</p></div>
       <div class="card">
-        ${err ? `<div class="alert alert-err">${esc(err)}</div>` : ''}
-        <form method="POST" action="/register">
-          <div class="field"><label>Username</label><input type="text" name="username" placeholder="Choose a username"></div>
-          <div class="field"><label>Email</label><input type="email" name="email" placeholder="you@example.com"></div>
-          <div class="field"><label>Password</label><input type="password" name="password" placeholder="Choose a password"></div>
-          <!-- 🔴 BAC-3: role field accepted from user — privilege escalation -->
+        ${errBlock}
+        <form method="POST" action="/register" id="regForm" novalidate>
+
+          <div class="field">
+            <label>Username</label>
+            <input
+              type="text"
+              name="username"
+              id="regUsername"
+              placeholder="Letters and numbers only"
+              maxlength="${MAX_FIELD_LENGTH}"
+              value="${esc(pf.username || '')}"
+              autocomplete="username">
+            <div class="char-counter" id="unCount">0 / ${MAX_FIELD_LENGTH}</div>
+            <div class="hint">Letters and numbers only · max ${MAX_FIELD_LENGTH} characters</div>
+          </div>
+
+          <div class="field">
+            <label>Email</label>
+            <input
+              type="email"
+              name="email"
+              id="regEmail"
+              placeholder="you@example.com"
+              maxlength="${MAX_FIELD_LENGTH}"
+              value="${esc(pf.email || '')}"
+              autocomplete="email">
+            <div class="char-counter" id="emCount">0 / ${MAX_FIELD_LENGTH}</div>
+            <div class="hint">Format: you@example.com · max ${MAX_FIELD_LENGTH} characters</div>
+          </div>
+
+          <div class="field">
+            <label>Password</label>
+            <input
+              type="password"
+              name="password"
+              id="regPassword"
+              placeholder="Min 5 chars, 1 letter, 1 number"
+              maxlength="${MAX_FIELD_LENGTH}"
+              autocomplete="new-password">
+            <div class="char-counter" id="pwCount">0 / ${MAX_FIELD_LENGTH}</div>
+            <div class="hint">Min 5 characters · at least 1 letter and 1 number · max ${MAX_FIELD_LENGTH} characters</div>
+          </div>
+
+          <!-- 🔴 BAC-3: role field accepted from user — privilege escalation (intentional vuln) -->
           <input type="hidden" name="role" value="user">
+
           <button type="submit" class="btn" style="width:100%">Create account</button>
         </form>
+
         <p class="small muted" style="text-align:center;margin-top:1rem">Already registered? <a href="/login">Sign in</a></p>
       </div>
-    </div>`, u);
+    </div>
+
+    <script>
+    /* Live character counters for all three fields (FIX-1 visual feedback) */
+    (function(){
+      const MAX = ${MAX_FIELD_LENGTH};
+      function attachCounter(inputId, counterId) {
+        const inp = document.getElementById(inputId);
+        const ctr = document.getElementById(counterId);
+        if (!inp || !ctr) return;
+        function update() {
+          const len = inp.value.length;
+          ctr.textContent = len + ' / ' + MAX;
+          ctr.classList.toggle('over', len > MAX);
+        }
+        inp.addEventListener('input', update);
+        update();
+      }
+      attachCounter('regUsername', 'unCount');
+      attachCounter('regEmail',    'emCount');
+      attachCounter('regPassword', 'pwCount');
+    })();
+    </script>`, u);
 }
 
 function pgOrders(u, viewUid, msg) {
@@ -713,9 +843,6 @@ const server = http.createServer(async (req, res) => {
   const sid     = cookies['session'];
 
   // ── Resolve current user ──────────────────────────────────────────────────
-  // Priority 1: JWT Bearer token  (Authorization: Bearer <token>)
-  // Priority 2: Session cookie    (browser UI fallback)
-  // The old base64 token cookie (BAC-2) has been removed.
   let me = null;
 
   const bearerPayload = extractBearer(req);
@@ -812,20 +939,29 @@ const server = http.createServer(async (req, res) => {
   // ── POST /login ───────────────────────────────────────────────────────────
   if (req.method === 'POST' && path === '/login') {
     const b = await parseBody(req);
-    if (!(b.username || '').trim() || !(b.password || '').trim()) {
+
+    // FIX-L3: trim leading/trailing whitespace from both fields
+    const loginUsername = (b.username || '').trim();
+    const loginPassword = (b.password || '').trim();
+
+    if (!loginUsername || !loginPassword) {
       if (isApi()) return json({ success: false, error: 'Username and password are required.' }, 400);
       return redir('/login?err=Username+and+password+are+required.');
     }
-    const found = db.prepare('SELECT * FROM users WHERE username = ?').get(b.username);
-    // 🔴 INJ-2: raw username in error
+
+    // FIX-L1: case-insensitive lookup — Alice, ALICE, alice all resolve to the same account
+    const found = db.prepare('SELECT * FROM users WHERE LOWER(username) = ?').get(loginUsername.toLowerCase());
+
+    // FIX-L2: generic error — never reveal whether the username exists or the password is wrong
+    const INVALID_CREDS = 'Invalid username or password.';
     if (!found) {
-      if (isApi()) return json({ success: false, error: `No account found for: ${b.username}` }, 401);
-      return redir('/login?err=' + encodeURIComponent('No account found for: ' + b.username));
+      if (isApi()) return json({ success: false, error: INVALID_CREDS }, 401);
+      return redir('/login?err=' + encodeURIComponent(INVALID_CREDS));
     }
-    // 🔴 CF-1: plaintext comparison
-    if (found.password !== b.password) {
-      if (isApi()) return json({ success: false, error: `Incorrect password for: ${b.username}` }, 401);
-      return redir('/login?err=' + encodeURIComponent('Incorrect password for: ' + b.username));
+    // 🔴 CF-1: plaintext comparison (intentional vuln — kept)
+    if (found.password !== loginPassword) {
+      if (isApi()) return json({ success: false, error: INVALID_CREDS }, 401);
+      return redir('/login?err=' + encodeURIComponent(INVALID_CREDS));
     }
 
     // Issue JWT Bearer token
@@ -844,7 +980,7 @@ const server = http.createServer(async (req, res) => {
         success: true,
         message: 'Login successful',
         user: { id: found.id, username: found.username, email: found.email, role: found.role },
-        token: bearerToken   // ← send to client; use as: Authorization: Bearer <token>
+        token: bearerToken
       }, null, 2));
     }
     res.writeHead(302, {
@@ -855,23 +991,43 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── GET /register ─────────────────────────────────────────────────────────
-  if (req.method === 'GET' && path === '/register') return html(pgRegister(me, null));
+  if (req.method === 'GET' && path === '/register') return html(pgRegister(me, null, null));
 
-  // ── POST /register ────────────────────────────────────────────────────────
+  // ── POST /register — all 6 signup fixes applied here ─────────────────────
   if (req.method === 'POST' && path === '/register') {
     const b = await parseBody(req);
-    if (!b.username || !b.password) {
-      if (isApi()) return json({ success: false, error: 'Username and password are required' }, 400);
-      return html(pgRegister(null, 'Username and password are required'));
+
+    const username = (b.username || '').trim();
+    const email    = (b.email    || '').trim();
+    const password = (b.password || '').trim();
+
+    // Run all validation rules (FIX-1 through FIX-6)
+    const errors = validateRegistration(username, email, password);
+
+    // FIX-3: Duplicate username check
+    if (!errors.length || !errors.some(e => e.includes('required'))) {
+      if (username) {
+        // FIX-L1 consistency: check lowercase so "Alice" and "alice" are treated as the same
+        const existingUser = db.prepare('SELECT id FROM users WHERE LOWER(username) = ?').get(username.toLowerCase());
+        if (existingUser) errors.push('That username is already taken.');
+      }
+      // FIX-3: Duplicate email check
+      if (email) {
+        const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+        if (existingEmail) errors.push('An account with that email address already exists.');
+      }
     }
-    const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(b.username);
-    if (existing) {
-      if (isApi()) return json({ success: false, error: 'That username is already taken' }, 409);
-      return html(pgRegister(null, 'That username is already taken'));
+
+    if (errors.length) {
+      if (isApi()) return json({ success: false, errors }, 400);
+      return html(pgRegister(null, errors, { username, email }));
     }
-    // 🔴 BAC-3: role accepted from body
+
+    // FIX-L1 consistency: store username as lowercase so login lookup always matches
+    // 🔴 BAC-3: role accepted from body (intentional vuln preserved)
     const result = db.prepare('INSERT INTO users (username, email, password, role, balance) VALUES (?, ?, ?, ?, ?)')
-      .run(b.username, b.email || '', b.password, b.role || 'user', 100);
+      .run(username.toLowerCase(), email, password, b.role || 'user', 100);
+
     if (isApi()) return json({ success: true, message: 'Account created successfully', userId: result.lastInsertRowid }, 201);
     return redir('/login');
   }
@@ -1031,7 +1187,7 @@ const server = http.createServer(async (req, res) => {
     const idx  = Number(b.idx);
     if (cart[idx]) {
       cart[idx].quantity = Math.max(1, Number(b.quantity) || 1);
-      cart[idx].price    = Number(b.price); // 🔴 CART-2: price overwritten from body
+      cart[idx].price    = Number(b.price); // 🔴 CART-2
     }
     if (isApi()) return json({ success: true, message: 'Cart updated', cart: carts[me.id] });
     return redir('/cart?msg=Cart+updated!');
@@ -1136,38 +1292,17 @@ server.listen(PORT, () => {
   console.log('');
   console.log('  Accounts:  alice/alice123  ·  bob/bob12345  ·  admin/shopAdmin@99');
   console.log('');
-  console.log('  Bearer token auth:');
-  console.log('    1. POST /login  { "username":"alice", "password":"alice123" }');
-  console.log('       Response: { "token": "Bearer eyJ..." }');
-  console.log('    2. All protected endpoints:');
-  console.log('       Header:  Authorization: Bearer eyJ...');
+  console.log('  Signup fixes applied (v2):');
+  console.log('    FIX-1  Max 16 chars on username / email / password');
+  console.log('    FIX-2  Email format validated (must match x@y.z)');
+  console.log('    FIX-3  Duplicate email address rejected');
+  console.log('    FIX-4  Weak password rejected (min 5 chars, 1 letter, 1 digit)');
+  console.log('    FIX-5  Username: alphanumeric only');
+  console.log('    FIX-6  Empty fields rejected');
   console.log('');
-  console.log('  Protected endpoints (require Bearer token or session):');
-  console.log('    POST /orders            POST /products/:id/review');
-  console.log('    GET  /account/orders    GET  /orders/:id');
-  console.log('    GET  /account/profile   POST /account/profile');
-  console.log('    GET  /cart              POST /cart/add');
-  console.log('    POST /cart/update       POST /cart/remove');
-  console.log('    POST /cart/checkout     GET  /orders/:id/edit');
-  console.log('    POST /orders/:id/edit   GET  /admin (role=admin)');
-  console.log('');
-  console.log('  Remaining vulnerabilities:');
-  console.log(`  XSS-1  Reflected   →  GET  /products/<script>alert(1)</script>`);
-  console.log(`  XSS-2  Stored      →  POST /products/1/review  {"text":"<img src=x onerror=alert(1)>","rating":"5"}`);
-  console.log(`  XSS-3  DOM         →  GET  /welcome#<svg onload=alert(1)>`);
-  console.log(`  BAC-1  IDOR        →  GET  /account/orders?userId=1`);
-  console.log(`  BAC-3  PrivEsc     →  POST /register  {"username":"x","password":"y","role":"admin"}`);
-  console.log(`  CF-1   Plaintext   →  GET  /admin`);
-  console.log(`  CF-2   DataLeak    →  GET  /health`);
-  console.log(`  INJ-1  SQLi        →  GET  /search?q=%27 UNION SELECT id,username,password,email,role,balance,emoji,description FROM users--`);
-  console.log(`  INJ-2  HTMLInj     →  POST /login  {"username":"<b>test</b>","password":"x"}`);
-  console.log(`  CART-1 XSS Cart    →  POST /cart/add  {"productId":1,"name":"<img src=x onerror=alert(1)>","price":"59.99"}`);
-  console.log(`  CART-2 PriceManip  →  POST /cart/add  {"productId":1,"name":"Headphones","price":"0.01"}`);
-  console.log(`  ADM-1  No CSRF     →  POST /admin/delete-user  {"userId":2}`);
-  console.log(`  ORD-1  IDOR Edit   →  GET  /orders/1/edit`);
-  console.log(`  ORD-2  StatusTampr →  POST /orders/1/edit  {"status":"delivered"}`);
-  console.log('');
-  console.log('  Postman: Headers → Accept: application/json  +  Content-Type: application/json');
-  console.log('           Then:   → Authorization: Bearer <token from /login>');
+  console.log('  Login fixes applied (v3):');
+  console.log('    FIX-L1  Case-insensitive username (Alice == alice == ALICE)');
+  console.log('    FIX-L2  Generic error message ("Invalid username or password.")');
+  console.log('    FIX-L3  Leading/trailing whitespace stripped from username');
   console.log('');
 });
