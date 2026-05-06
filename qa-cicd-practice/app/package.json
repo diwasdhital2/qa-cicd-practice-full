@@ -13,5 +13,8 @@
   "type": "commonjs",
   "dependencies": {
     "jsonwebtoken": "^9.0.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }
