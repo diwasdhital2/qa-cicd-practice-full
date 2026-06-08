@@ -142,7 +142,7 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
 }
-
+//test comment
 function stars(n) { return '★'.repeat(n) + '☆'.repeat(5 - n); }
 
 function extractBearer(req) {
