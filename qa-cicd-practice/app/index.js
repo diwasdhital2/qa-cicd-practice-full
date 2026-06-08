@@ -13,7 +13,7 @@ let products = [];
 let orders   = [];
 let nextProductId = 1;
 let nextOrderId   = 1;
-
+//comment
 function resetStore() {
   products = [
     { id: 1, name: 'Laptop',     price: 999.99, stock: 50, category: 'electronics' },
@@ -25,6 +25,7 @@ function resetStore() {
   nextOrderId   = 1;
 }
 resetStore();
+
 
 // ─── Tiny router ───────────────────────────────────────────────────────────
 class App {

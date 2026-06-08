@@ -1,0 +1,441 @@
+-- ============================================================
+--  ShopEase SQL Practice Script
+--  Database: shop.db
+--  Tables: users, products, orders, reviews
+-- ============================================================
+--  HOW TO USE IN DBEAVER:
+--    1. Open this file via File → Open File
+--    2. Highlight any block and press Ctrl+Enter (Win/Linux)
+--       or Cmd+Enter (Mac) to run just that block
+-- ============================================================
+
+
+-- ============================================================
+--  SECTION 1 — BASIC SELECT
+--  Goal: Read data from a single table
+-- ============================================================
+
+-- 1.1  See all users
+SELECT * FROM users;
+
+-- 1.2  See all products
+SELECT * FROM products;
+
+-- 1.3  Pick only the columns you care about
+SELECT username, email, role FROM users;
+
+-- 1.4  Show product name, price, and category only
+SELECT name, price, category FROM products;
+
+-- 1.5  How many rows are in each table?
+SELECT COUNT(*) AS total_users    FROM users;
+SELECT COUNT(*) AS total_products FROM products;
+SELECT COUNT(*) AS total_orders   FROM orders;
+SELECT COUNT(*) AS total_reviews  FROM reviews;
+
+
+-- ============================================================
+--  SECTION 2 — WHERE (filtering rows)
+--  Goal: Return only rows that match a condition
+-- ============================================================
+
+-- 2.1  Show only admin users
+SELECT * FROM users WHERE role = 'admin';
+
+-- 2.2  Show only regular (non-admin) users
+SELECT * FROM users WHERE role = 'user';
+
+-- 2.3  Products cheaper than $30
+SELECT name, price FROM products WHERE price < 30;
+
+-- 2.4  Products in the Electronics category
+SELECT name, price FROM products WHERE category = 'Electronics';
+
+-- 2.5  Orders that have been delivered
+SELECT * FROM orders WHERE status = 'delivered';
+
+-- 2.6  Orders still pending
+SELECT * FROM orders WHERE status = 'pending';
+
+-- 2.7  Orders with a total over $50
+SELECT * FROM orders WHERE total > 50;
+
+-- 2.8  Users with a balance of $0 (hint: the admin)
+SELECT username, balance FROM users WHERE balance = 0;
+
+-- 2.9  Products out of stock
+SELECT name, stock FROM products WHERE stock = 0;
+
+-- 2.10 Reviews with a perfect 5-star rating
+SELECT author, rating, date FROM reviews WHERE rating = 5;
+
+
+-- ============================================================
+--  SECTION 3 — AND / OR / NOT
+--  Goal: Combine multiple conditions
+-- ============================================================
+
+-- 3.1  Orders that are pending AND total over $50
+SELECT * FROM orders WHERE status = 'pending' AND total > 50;
+
+-- 3.2  Products in Electronics OR Kitchen category
+SELECT name, category, price FROM products
+WHERE category = 'Electronics' OR category = 'Kitchen';
+
+-- 3.3  Users who are NOT admins
+SELECT username, role FROM users WHERE NOT role = 'admin';
+
+-- 3.4  Orders placed in March 2026 with status 'delivered'
+SELECT * FROM orders
+WHERE date LIKE '2026-03%' AND status = 'delivered';
+
+-- 3.5  Products priced between $20 and $60 (using BETWEEN)
+SELECT name, price FROM products WHERE price BETWEEN 20 AND 60;
+
+
+-- ============================================================
+--  SECTION 4 — ORDER BY & LIMIT
+--  Goal: Sort results and limit how many rows you get back
+-- ============================================================
+
+-- 4.1  Products sorted cheapest first
+SELECT name, price FROM products ORDER BY price ASC;
+
+-- 4.2  Products sorted most expensive first
+SELECT name, price FROM products ORDER BY price DESC;
+
+-- 4.3  Users sorted alphabetically by username
+SELECT username, email FROM users ORDER BY username ASC;
+
+-- 4.4  Top 3 most expensive products
+SELECT name, price FROM products ORDER BY price DESC LIMIT 3;
+
+-- 4.5  The 5 most recent orders
+SELECT * FROM orders ORDER BY date DESC LIMIT 5;
+
+-- 4.6  The single largest order by total amount
+SELECT * FROM orders ORDER BY total DESC LIMIT 1;
+
+-- 4.7  Orders sorted by status, then by date (multi-column sort)
+SELECT id, status, date, total FROM orders
+ORDER BY status ASC, date DESC;
+
+
+-- ============================================================
+--  SECTION 5 — LIKE & WILDCARDS
+--  Goal: Search text values with pattern matching
+--  % = any number of characters
+--  _ = exactly one character
+-- ============================================================
+
+-- 5.1  Products whose name contains the word "a" anywhere
+SELECT name FROM products WHERE name LIKE '%a%';
+
+-- 5.2  Users whose email is a Gmail address
+SELECT username, email FROM users WHERE email LIKE '%@gmail.com';
+
+-- 5.3  Orders with a note (note is not empty)
+SELECT id, note FROM orders WHERE note IS NOT NULL AND note != '';
+
+-- 5.4  Users whose username starts with 'a'
+SELECT username FROM users WHERE username LIKE 'a%';
+
+-- 5.5  Products whose description mentions 'battery'
+SELECT name, description FROM products WHERE description LIKE '%battery%';
+
+
+-- ============================================================
+--  SECTION 6 — AGGREGATE FUNCTIONS
+--  Goal: Summarise data across many rows
+--  Functions: COUNT, SUM, AVG, MIN, MAX
+-- ============================================================
+
+-- 6.1  Total revenue across all orders
+SELECT SUM(total) AS total_revenue FROM orders;
+
+-- 6.2  Average order total
+SELECT ROUND(AVG(total), 2) AS avg_order_value FROM orders;
+
+-- 6.3  Most expensive and cheapest product
+SELECT MAX(price) AS most_expensive, MIN(price) AS cheapest FROM products;
+
+-- 6.4  Total balance held by all users
+SELECT SUM(balance) AS total_balance FROM users;
+
+-- 6.5  Average product rating across all reviews
+SELECT ROUND(AVG(rating), 2) AS avg_rating FROM reviews;
+
+-- 6.6  How many reviews does each product have?
+SELECT productId, COUNT(*) AS review_count
+FROM reviews
+GROUP BY productId
+ORDER BY review_count DESC;
+
+-- 6.7  Revenue per order status
+SELECT status, COUNT(*) AS order_count, ROUND(SUM(total), 2) AS revenue
+FROM orders
+GROUP BY status;
+
+-- 6.8  Total quantity sold per product
+SELECT productId, SUM(quantity) AS units_sold
+FROM orders
+GROUP BY productId
+ORDER BY units_sold DESC;
+
+
+-- ============================================================
+--  SECTION 7 — GROUP BY & HAVING
+--  Goal: Group rows and filter the groups
+--  HAVING filters groups (like WHERE but after GROUP BY)
+-- ============================================================
+
+-- 7.1  Number of orders per user
+SELECT userId, COUNT(*) AS order_count
+FROM orders
+GROUP BY userId;
+
+-- 7.2  Users who have placed more than 1 order
+SELECT userId, COUNT(*) AS order_count
+FROM orders
+GROUP BY userId
+HAVING order_count > 1;
+
+-- 7.3  Products with an average review rating above 4
+SELECT productId, ROUND(AVG(rating), 2) AS avg_rating
+FROM reviews
+GROUP BY productId
+HAVING avg_rating > 4;
+
+-- 7.4  Categories and their average product price
+SELECT category, ROUND(AVG(price), 2) AS avg_price, COUNT(*) AS num_products
+FROM products
+GROUP BY category
+ORDER BY avg_price DESC;
+
+-- 7.5  Order statuses that appear more than once
+SELECT status, COUNT(*) AS count
+FROM orders
+GROUP BY status
+HAVING count > 1;
+
+
+-- ============================================================
+--  SECTION 8 — INNER JOIN
+--  Goal: Combine rows from two tables where there is a match
+--  An INNER JOIN drops rows that have no match on either side
+-- ============================================================
+
+-- 8.1  Show every order alongside the username who placed it
+SELECT
+    orders.id        AS order_id,
+    users.username,
+    orders.total,
+    orders.status,
+    orders.date
+FROM orders
+INNER JOIN users ON orders.userId = users.id;
+
+-- 8.2  Show every order alongside the product name
+SELECT
+    orders.id        AS order_id,
+    products.name    AS product,
+    orders.quantity,
+    orders.total,
+    orders.status
+FROM orders
+INNER JOIN products ON orders.productId = products.id;
+
+-- 8.3  Three-table join: order + user + product in one query
+SELECT
+    orders.id        AS order_id,
+    users.username,
+    products.name    AS product,
+    orders.quantity,
+    orders.total,
+    orders.status,
+    orders.date
+FROM orders
+INNER JOIN users    ON orders.userId    = users.id
+INNER JOIN products ON orders.productId = products.id
+ORDER BY orders.date DESC;
+
+-- 8.4  Reviews with the product name (instead of raw productId)
+SELECT
+    reviews.author,
+    products.name   AS product,
+    reviews.rating,
+    reviews.date
+FROM reviews
+INNER JOIN products ON reviews.productId = products.id
+ORDER BY reviews.date DESC;
+
+-- 8.5  Only delivered orders, with username and product name
+SELECT
+    users.username,
+    products.name   AS product,
+    orders.quantity,
+    orders.total,
+    orders.date
+FROM orders
+INNER JOIN users    ON orders.userId    = users.id
+INNER JOIN products ON orders.productId = products.id
+WHERE orders.status = 'delivered';
+
+
+-- ============================================================
+--  SECTION 9 — LEFT JOIN
+--  Goal: Keep ALL rows from the left table even if there is
+--        no matching row in the right table (NULL fills in)
+-- ============================================================
+
+-- 9.1  All users, with their orders (users with no orders show up too)
+SELECT
+    users.username,
+    orders.id    AS order_id,
+    orders.total,
+    orders.status
+FROM users
+LEFT JOIN orders ON users.id = orders.userId
+ORDER BY users.username;
+
+-- 9.2  Find users who have NEVER placed an order
+SELECT users.username, users.email
+FROM users
+LEFT JOIN orders ON users.id = orders.userId
+WHERE orders.id IS NULL;
+
+-- 9.3  All products, with how many times they've been ordered
+--      (products never ordered show 0)
+SELECT
+    products.name,
+    products.category,
+    COUNT(orders.id) AS times_ordered
+FROM products
+LEFT JOIN orders ON products.id = orders.productId
+GROUP BY products.id
+ORDER BY times_ordered DESC;
+
+-- 9.4  All products with their review count (0 if no reviews)
+SELECT
+    products.name,
+    COUNT(reviews.id)          AS review_count,
+    ROUND(AVG(reviews.rating), 2) AS avg_rating
+FROM products
+LEFT JOIN reviews ON products.id = reviews.productId
+GROUP BY products.id
+ORDER BY review_count DESC;
+
+
+-- ============================================================
+--  SECTION 10 — SUBQUERIES
+--  Goal: Use the result of one query inside another
+-- ============================================================
+
+-- 10.1  Products that cost more than the average product price
+SELECT name, price
+FROM products
+WHERE price > (SELECT AVG(price) FROM products);
+
+-- 10.2  Users who have placed at least one order
+SELECT username, email
+FROM users
+WHERE id IN (SELECT DISTINCT userId FROM orders);
+
+-- 10.3  The most expensive product (using a subquery)
+SELECT name, price
+FROM products
+WHERE price = (SELECT MAX(price) FROM products);
+
+-- 10.4  Orders placed by Alice (without hardcoding her user id)
+SELECT *
+FROM orders
+WHERE userId = (SELECT id FROM users WHERE username = 'alice');
+
+-- 10.5  Products that have never been reviewed
+SELECT name
+FROM products
+WHERE id NOT IN (SELECT DISTINCT productId FROM reviews);
+
+
+-- ============================================================
+--  SECTION 11 — PRACTICAL CHALLENGE QUERIES
+--  These combine multiple concepts — try to solve them yourself
+--  before running them!
+-- ============================================================
+
+-- CHALLENGE 1
+-- List each user's name and the total amount they have spent
+-- across all their orders, sorted by highest spender first
+SELECT
+    users.username,
+    ROUND(SUM(orders.total), 2) AS total_spent
+FROM users
+INNER JOIN orders ON users.id = orders.userId
+GROUP BY users.id
+ORDER BY total_spent DESC;
+
+-- CHALLENGE 2
+-- Show the top-rated product (highest average review score)
+-- Include the product name and the average rating
+SELECT
+    products.name,
+    ROUND(AVG(reviews.rating), 2) AS avg_rating,
+    COUNT(reviews.id)              AS review_count
+FROM products
+INNER JOIN reviews ON products.id = reviews.productId
+GROUP BY products.id
+ORDER BY avg_rating DESC
+LIMIT 1;
+
+-- CHALLENGE 3
+-- For each product category, show total revenue generated
+-- (from orders), sorted by revenue descending
+SELECT
+    products.category,
+    ROUND(SUM(orders.total), 2) AS category_revenue
+FROM orders
+INNER JOIN products ON orders.productId = products.id
+GROUP BY products.category
+ORDER BY category_revenue DESC;
+
+-- CHALLENGE 4
+-- Show every user alongside their most recent order date
+-- Include users who have never ordered (show NULL for date)
+SELECT
+    users.username,
+    MAX(orders.date) AS last_order_date
+FROM users
+LEFT JOIN orders ON users.id = orders.userId
+GROUP BY users.id
+ORDER BY last_order_date DESC;
+
+-- CHALLENGE 5
+-- Find products where stock is low (under 10) AND
+-- that have at least one pending order — these need restocking
+SELECT DISTINCT
+    products.name,
+    products.stock,
+    orders.status
+FROM products
+INNER JOIN orders ON products.id = orders.productId
+WHERE products.stock < 10
+  AND orders.status = 'pending';
+
+-- CHALLENGE 6
+-- Show a full order receipt: order id, username, product name,
+-- quantity, unit price (from products), line total (from orders),
+-- and order status — only for orders placed in 2026
+SELECT
+    orders.id                          AS order_id,
+    users.username,
+    products.name                      AS product,
+    orders.quantity,
+    products.price                     AS unit_price,
+    orders.total                       AS line_total,
+    orders.status,
+    orders.date
+FROM orders
+INNER JOIN users    ON orders.userId    = users.id
+INNER JOIN products ON orders.productId = products.id
+WHERE orders.date LIKE '2026%'
+ORDER BY orders.date;
