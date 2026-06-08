@@ -83,7 +83,7 @@ describe('POST /orders — create order', () => {
     const res = await api.post('/orders', { productId: 1, quantity: 1.5, userId: 'user-001' });
     expect(res.status).toBe(400);
   });
-
+//comment
   test('order total is correctly calculated', async () => {
     const res = await api.post('/orders', { productId: 2, quantity: 3, userId: 'user-003' });
     // Mouse: 29.99 × 3 = 89.97
