@@ -201,7 +201,7 @@ function createApp() {
     const product = products.find(p => p.id === productId);
     if (!product)              return res.json({ success: false, message: 'Product not found' }, 404);
     if (product.stock < quantity) return res.json({ success: false, message: 'Insufficient stock' }, 400);
-
+// this is a comment 
     product.stock -= quantity;
     const order = {
       id:        nextOrderId++,

@@ -1,0 +1,20 @@
+{
+  "name": "qa-cicd-practice-full",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diwasdhital2/qa-cicd-practice-full.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/diwasdhital2/qa-cicd-practice-full/issues"
+  },
+  "homepage": "https://github.com/diwasdhital2/qa-cicd-practice-full#readme",
+  "description": ""
+}
