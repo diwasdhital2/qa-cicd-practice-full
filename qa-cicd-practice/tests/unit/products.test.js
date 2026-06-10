@@ -15,7 +15,7 @@ beforeAll(() => {
   app = createApp();
   api = client(app);
 });
-
+// Close server after all tests to free up resources
 afterAll(() => api.close());
 
 beforeEach(async () => {
