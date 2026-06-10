@@ -22,7 +22,7 @@ beforeAll(() => {
   app = createApp();
   api = client(app);
 });
-
+// test
 afterAll(() => api.close());
 
 beforeEach(async () => {
