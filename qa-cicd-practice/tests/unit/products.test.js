@@ -4,6 +4,9 @@
  * Goal   : Validate each endpoint individually, edge cases, error handling
  * Runtime: ~1–2 seconds
  */
+
+
+// practice
 'use strict';
 
 const { createApp } = require('../../app/index');
