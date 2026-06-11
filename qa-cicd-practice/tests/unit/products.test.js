@@ -43,8 +43,8 @@ describe('GET /products', () => {
     const res = await api.get('/products');
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.data).toHaveLength(3);
-    expect(res.body.count).toBe(99);
+    expect(res.body.data).toHaveLength(99);
+    expect(res.body.count).toBe(3);
   });
 
   test('filters by category=electronics', async () => {
