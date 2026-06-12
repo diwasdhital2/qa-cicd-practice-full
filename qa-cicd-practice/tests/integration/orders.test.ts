@@ -1,3 +1,6 @@
+import { createApp } from '../../app/index';
+import client from '../helpers/client';
+
 /**
  * INTEGRATION TESTS — Orders + Product Stock Interaction
  * Layer  : Integration (runs on Pull Requests and merges to main)
@@ -5,13 +8,32 @@
  *          and that multiple components work together correctly.
  * Runtime: ~3–5 seconds
  */
- //this is a test comment for practice
-'use strict';
-//this is a test comment to trigger the pipeline
-const { createApp } = require('../../app/index');
-const client = require('../helpers/client');
 
-let app, api;
+type OrderRecord = {
+  id: number;
+  userId: string;
+  productId: number;
+  quantity: number;
+  total: number;
+  status: string;
+  createdAt: string;
+};
+
+type ApiResponse = {
+  status: number;
+  body: any;
+};
+
+type ApiClient = {
+  get(path: string): Promise<ApiResponse>;
+  post(path: string, body?: any): Promise<ApiResponse>;
+  put(path: string, body?: any): Promise<ApiResponse>;
+  delete(path: string): Promise<ApiResponse>;
+  close(): Promise<void>;
+};
+
+let app: ReturnType<typeof createApp>;
+let api: ApiClient;
 
 beforeAll(() => {
   app = createApp();
@@ -109,7 +131,7 @@ describe('GET /orders/:userId — retrieve user orders', () => {
 
     const res = await api.get('/orders/alice');
     expect(res.body.count).toBe(2);
-    res.body.data.forEach(o => expect(o.userId).toBe('alice'));
+    (res.body.data as OrderRecord[]).forEach(o => expect(o.userId).toBe('alice'));
   });
 
   test('order list grows with each purchase', async () => {

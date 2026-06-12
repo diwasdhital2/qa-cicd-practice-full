@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": false,
+    "types": ["node", "jest"],
+    "allowJs": true,
+    "checkJs": false,
+    "outDir": "dist"
+  },
+  "include": [
+    "tests/**/*.ts",
+    "tests/**/*.js",
+    "app/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "coverage"
+  ]
+}

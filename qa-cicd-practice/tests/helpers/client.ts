@@ -2,27 +2,40 @@
  * Minimal test HTTP client — replaces supertest with zero npm dependencies.
  * Usage:  const api = require('../helpers/client'); const res = await api(app).get('/health');
  */
-'use strict';
 
-const http = require('http');
+import http from 'http';
 
-function client(app) {
-  let server;
-  let port;
+type ApiResponse = {
+  status: number;
+  body: any;
+};
+
+type ApiClient = {
+  get(path: string): Promise<ApiResponse>;
+  post(path: string, body?: any): Promise<ApiResponse>;
+  put(path: string, body?: any): Promise<ApiResponse>;
+  delete(path: string): Promise<ApiResponse>;
+  close(): Promise<void>;
+};
+
+function client(app: { listen(port: number, callback: () => void): any }): ApiClient {
+  let server: ReturnType<typeof app.listen> | null = null;
+  let port: number;
 
   function ensureServer() {
     if (server) return Promise.resolve();
-    return new Promise(resolve => {
+    return new Promise<void>(resolve => {
       server = app.listen(0, () => {             // OS picks a free port
-        port = server.address().port;
+        const address = server?.address();
+        port = typeof address === 'object' && address ? address.port as number : 0;
         resolve();
       });
     });
   }
 
-  function request(method, path, body) {
+  function request(method: string, path: string, body?: any): Promise<ApiResponse> {
     return ensureServer().then(() => {
-      return new Promise((resolve, reject) => {
+      return new Promise<ApiResponse>((resolve, reject) => {
         const bodyStr = body ? JSON.stringify(body) : null;
         const options = {
           hostname: '127.0.0.1',
@@ -41,7 +54,7 @@ function client(app) {
           res.on('end', () => {
             let body = null;
             try { body = JSON.parse(data); } catch { body = data; }
-            resolve({ status: res.statusCode, body });
+            resolve({ status: res.statusCode ?? 0, body });
           });
         });
 
@@ -52,7 +65,7 @@ function client(app) {
     });
   }
 
-  const api = {
+  const api: ApiClient = {
     get:    path        => request('GET',    path),
     post:   (path, b)  => request('POST',   path, b),
     put:    (path, b)  => request('PUT',    path, b),
@@ -63,4 +76,4 @@ function client(app) {
   return api;
 }
 
-module.exports = client;
+export default client;

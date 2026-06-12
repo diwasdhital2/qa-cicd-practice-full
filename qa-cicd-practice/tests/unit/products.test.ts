@@ -74,7 +74,7 @@ describe('GET /products', () => {
   });
 
   test('filters by category=electronics', async () => {
-    const res: { body: ApiResponse<Product[]> } =
+    const res: { status: number; body: ApiResponse<Product[]> } =
       await api.get('/products?category=electronics');
 
     expect(res.body.count).toBe(2);
@@ -85,7 +85,7 @@ describe('GET /products', () => {
   });
 
   test('filters by category=furniture', async () => {
-    const res: { body: ApiResponse<Product[]> } =
+    const res: { status: number; body: ApiResponse<Product[]> } =
       await api.get('/products?category=furniture');
 
     expect(res.body.count).toBe(1);
@@ -93,7 +93,7 @@ describe('GET /products', () => {
   });
 
   test('returns empty array for unknown category', async () => {
-    const res: { body: ApiResponse<Product[]> } =
+    const res: { status: number; body: ApiResponse<Product[]> } =
       await api.get('/products?category=unknown');
 
     expect(res.status).toBe(200);
@@ -108,7 +108,7 @@ describe('GET /products', () => {
 
 describe('GET /products/:id', () => {
   test('returns product by valid id', async () => {
-    const res: { body: ApiResponse<Product> } =
+    const res: { status: number; body: ApiResponse<Product> } =
       await api.get('/products/1');
 
     expect(res.status).toBe(200);
