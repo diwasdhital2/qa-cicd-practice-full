@@ -20,6 +20,7 @@ interface ApiResponse<T = any> {
   body: {
     data: T;
     count?: number;
+    status?: string;
   };
 }
 
