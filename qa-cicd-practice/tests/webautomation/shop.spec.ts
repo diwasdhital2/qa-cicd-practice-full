@@ -1,5 +1,4 @@
-'use strict';
-const { test, expect } = require('@playwright/test');
+import { test, expect } from '@playwright/test';
 
 // ── Homepage ─────────────────────────────────────────────────────────────────
 test.describe('Homepage', () => {
@@ -41,7 +40,7 @@ test.describe('Products page', () => {
   test('should navigate to product detail page', async ({ page }) => {
     await page.goto('/products');
     await page.locator('.pcard').first().locator('a.btn').click();
-    await expect(page.url()).toContain('/products/');
+    await expect(page).toHaveURL(/\/products\//);
   });
 
   test('should show product details correctly', async ({ page }) => {
@@ -86,7 +85,7 @@ test.describe('Login', () => {
     await page.fill('input[name="username"]', 'alice');
     await page.fill('input[name="password"]', 'alice123');
     await page.click('button[type="submit"]');
-    await expect(page.url()).toBe('http://localhost:3001/');
+    await expect(page).toHaveURL('http://localhost:3001/');
     await expect(page.locator('.chip')).toContainText('alice');
   });
 
@@ -103,7 +102,7 @@ test.describe('Login', () => {
     await page.fill('input[name="username"]', 'ALICE');
     await page.fill('input[name="password"]', 'alice123');
     await page.click('button[type="submit"]');
-    await expect(page.url()).toBe('http://localhost:3001/');
+    await expect(page).toHaveURL('http://localhost:3001/');
   });
 
 });
@@ -147,7 +146,7 @@ test.describe('Orders', () => {
     await page.fill('input[name="username"]', 'alice');
     await page.fill('input[name="password"]', 'alice123');
     await page.click('button[type="submit"]');
-    await expect(page.url()).toBe('http://localhost:3001/');
+    await expect(page).toHaveURL('http://localhost:3001/');
   });
 
   test('should show order history for logged in user', async ({ page }) => {
@@ -159,7 +158,7 @@ test.describe('Orders', () => {
     await page.goto('/products/3');
     await page.fill('input[name="quantity"]', '1');
     await page.click('button[type="submit"]');
-    await expect(page.url()).toContain('/account/orders');
+    await expect(page).toHaveURL(/\/account\/orders/);
   });
 
 });

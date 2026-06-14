@@ -11,12 +11,28 @@
  *   - System handles concurrent users correctly
  *   - Error paths are handled gracefully without corrupting state
  */
-'use strict';
 
-const { createApp } = require('../../app/index');
-const client = require('../helpers/client');
+import { createApp } from '../../app/index';
+import client from '../helpers/client';
 
-let app, api;
+interface ApiResponse<T = any> {
+  status: number;
+  body: {
+    data: T;
+    count?: number;
+  };
+}
+
+interface ApiClient {
+  get: (path: string) => Promise<ApiResponse>;
+  post: (path: string, body?: Record<string, unknown>) => Promise<ApiResponse>;
+  put: (path: string, body?: Record<string, unknown>) => Promise<ApiResponse>;
+  delete: (path: string) => Promise<ApiResponse>;
+  close: () => void;
+}
+
+let app: ReturnType<typeof createApp>;
+let api: ApiClient;
 
 beforeAll(() => {
   app = createApp();
@@ -42,7 +58,7 @@ describe('E2E Journey 1: Customer browses store and places an order', () => {
     // ── Step 2: Customer filters by electronics ───────────────────────────
     const electronics = await api.get('/products?category=electronics');
     expect(electronics.status).toBe(200);
-    const mouse = electronics.body.data.find(p => p.name === 'Mouse');
+    const mouse = electronics.body.data.find((p: any) => p.name === 'Mouse');
     expect(mouse).toBeDefined();
     expect(mouse.price).toBe(29.99);
 
@@ -68,7 +84,7 @@ describe('E2E Journey 1: Customer browses store and places an order', () => {
     expect(history.body.data[0].productId).toBe(mouse.id);
   });
 });
-//newusertest
+
 // ═══════════════════════════════════════════════════════════════════════════
 // JOURNEY 2: Admin manages product inventory
 // ═══════════════════════════════════════════════════════════════════════════
@@ -83,7 +99,7 @@ describe('E2E Journey 2: Admin manages product catalog', () => {
 
     // ── Step 2: Product appears in the furniture catalog ──────────────────
     const catalog = await api.get('/products?category=furniture');
-    const found = catalog.body.data.find(p => p.id === productId);
+    const found = catalog.body.data.find((p: any) => p.id === productId);
     expect(found).toBeDefined();
 
     // ── Step 3: Admin applies a sale price ────────────────────────────────
@@ -106,7 +122,7 @@ describe('E2E Journey 2: Admin manages product catalog', () => {
     expect(afterDelete.status).toBe(404);
 
     const catalogAfter = await api.get('/products?category=furniture');
-    expect(catalogAfter.body.data.find(p => p.id === productId)).toBeUndefined();
+    expect(catalogAfter.body.data.find((p: any) => p.id === productId)).toBeUndefined();
   });
 });
 
@@ -187,11 +203,16 @@ describe('E2E Journey 4: System stays consistent after failures', () => {
 // JOURNEY 5: Pre-deploy smoke test (must pass before releasing to production)
 // ═══════════════════════════════════════════════════════════════════════════
 describe('E2E Journey 5: Pre-deploy smoke test', () => {
-  const endpoints = [
+  const endpoints: Array<{
+    label: string;
+    method: 'get' | 'post' | 'put' | 'delete';
+    path: string;
+    expected: number;
+  }> = [
     { label: 'GET /health',         method: 'get',    path: '/health',            expected: 200 },
-    { label: 'GET /products',       method: 'get',    path: '/products',           expected: 200 },
-    { label: 'GET /products/1',     method: 'get',    path: '/products/1',         expected: 200 },
-    { label: 'GET /orders/smoke',   method: 'get',    path: '/orders/smoke',       expected: 200 },
+    { label: 'GET /products',       method: 'get',    path: '/products',          expected: 200 },
+    { label: 'GET /products/1',     method: 'get',    path: '/products/1',        expected: 200 },
+    { label: 'GET /orders/smoke',   method: 'get',    path: '/orders/smoke',      expected: 200 },
   ];
 
   endpoints.forEach(({ label, method, path, expected }) => {
