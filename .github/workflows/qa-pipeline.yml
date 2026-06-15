@@ -2,14 +2,15 @@
 #  QA AUTOMATION PIPELINE
 #
 #  WHEN IT RUNS:
-#  ┌─ Every push to any branch          → Unit tests only (fast feedback)
-#  ├─ Every Pull Request to main/develop → Unit + Integration + ZAP Scan
+#  ┌─ Every push to any branch          → Unit + Integration + Performance (JMeter)
+#  ├─ Every Pull Request to main/develop → Unit + Integration + Performance + ZAP Scan
 #  ├─ Every merge to main               → All tests + ZAP + build artifact
 #  └─ Nightly at 2am UTC               → Full suite including E2E + ZAP
 #
 #  BUILD RULES:
 #  ✅ All tests pass  → Build succeeds, PR can be merged
 #  ❌ Any test fails  → Build fails, PR is BLOCKED from merging
+#  ⚡ Performance tests NEVER fail the build (report-only)
 #
 #  ZAP SCAN — THREE LAYERS:
 #  Layer 1 — Manual curl checks  : tests all 8 known vulns directly (fast)
@@ -100,9 +101,8 @@ jobs:
     timeout-minutes: 15
 
     if: |
+      github.event_name == 'push'         ||
       github.event_name == 'pull_request' ||
-      github.ref == 'refs/heads/main'     ||
-      github.ref == 'refs/heads/develop'  ||
       github.event_name == 'schedule'     ||
       github.event_name == 'workflow_dispatch'
 
@@ -137,7 +137,83 @@ jobs:
           retention-days: 7
 
 ##############################################################################
-# JOB 3 — E2E TESTS
+# JOB 3 — PERFORMANCE TESTS (JMeter)
+##############################################################################
+  performance-tests:
+    name: "⚡ Performance Tests (JMeter)"
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    timeout-minutes: 15
+
+    if: |
+      github.event_name == 'push'         ||
+      github.event_name == 'pull_request' ||
+      github.event_name == 'schedule'     ||
+      github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start app
+        run: node app/index.js &
+
+      - name: Wait for app to be ready
+        run: |
+          echo "Waiting for app on http://localhost:3001 ..."
+          for i in {1..20}; do
+            if curl -s --fail http://localhost:3001 > /dev/null 2>&1; then
+              echo "✅ App is up!"
+              break
+            fi
+            echo "  Attempt $i/20 — retrying in 3s..."
+            sleep 3
+          done
+          curl -sf http://localhost:3001 > /dev/null || (echo "❌ App failed to start" && exit 1)
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Download Apache JMeter
+        run: |
+          wget -q https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
+          tar -xzf apache-jmeter-5.6.3.tgz
+
+      # ⚡ Performance tests are report-only — never fail the build
+      - name: Run JMeter test plan
+        continue-on-error: true
+        run: |
+          mkdir -p reports
+          ./apache-jmeter-5.6.3/bin/jmeter -n \
+            -t performance/shopease-load-test.jmx \
+            -l reports/jmeter-results.jtl \
+            -e -o reports/jmeter-html-report
+
+      - name: Upload JMeter report
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: jmeter-performance-report
+          path: |
+            qa-cicd-practice/reports/jmeter-html-report
+            qa-cicd-practice/reports/jmeter-results.jtl
+          retention-days: 14
+
+##############################################################################
+# JOB 4 — E2E TESTS
 ##############################################################################
   e2e-tests:
     name: "🎭 E2E Tests"
@@ -181,7 +257,7 @@ jobs:
           retention-days: 14
 
 ##############################################################################
-# JOB 4 — ZAP SECURITY SCAN
+# JOB 5 — ZAP SECURITY SCAN
 ##############################################################################
   zap-security-scan:
     name: "🔐 ZAP Security Scan"
@@ -252,8 +328,6 @@ jobs:
           echo ""                                                   | tee -a $REPORT
 
           # ── INJ-1: SQL Injection ──────────────────────────────
-          # products=7 cols, users=6 cols → add '' as 7th dummy col
-          # Payload: %' UNION SELECT id,username,password,email,role,balance,'' FROM users--
           echo "[ INJ-1 ] SQL Injection on /search ..."           | tee -a $REPORT
           SQLI=$(curl -s "http://localhost:3001/search?q=%25'%20UNION%20SELECT%20id%2Cusername%2Cpassword%2Cemail%2Crole%2Cbalance%2C''%20FROM%20users--")
           if echo "$SQLI" | grep -qi "alice123\|bob12345\|shopAdmin"; then
@@ -377,8 +451,6 @@ jobs:
           retention-days: 30
 
       # ── LAYER 2: ZAP Authenticated Full Scan ─────────────────────
-      # chmod 777 on reports dir so ZAP Docker (runs as zap user)
-      # has permission to write report files into the mounted volume
       - name: Pull ZAP Docker image
         run: docker pull ghcr.io/zaproxy/zaproxy:stable
 
@@ -414,7 +486,7 @@ jobs:
           retention-days: 30
 
 ##############################################################################
-# JOB 5 — BUILD
+# JOB 6 — BUILD
 ##############################################################################
   build:
     name: "🏗️ Build & Package"
@@ -454,12 +526,12 @@ jobs:
           retention-days: 30
 
 ##############################################################################
-# JOB 6 — NOTIFY
+# JOB 7 — NOTIFY
 ##############################################################################
   notify:
     name: "📣 Post Results"
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, e2e-tests, zap-security-scan]
+    needs: [unit-tests, integration-tests, e2e-tests, zap-security-scan, performance-tests]
     if: always() && github.event_name == 'pull_request'
 
     permissions:
@@ -475,6 +547,7 @@ jobs:
             const integration = '${{ needs.integration-tests.result }}';
             const e2e         = '${{ needs.e2e-tests.result }}';
             const zap         = '${{ needs.zap-security-scan.result }}';
+            const perf        = '${{ needs.performance-tests.result }}';
             const vulns       = '${{ env.VULNS_FOUND }}' || '?';
 
             const icon = s =>
@@ -496,6 +569,7 @@ jobs:
               `| 🧪 Unit Tests        | ${icon(unit)} ${unit}               |`,
               `| 🔗 Integration Tests | ${icon(integration)} ${integration}  |`,
               `| 🎭 E2E Tests         | ${icon(e2e)} ${e2e}                 |`,
+              `| ⚡ Performance Tests | ${icon(perf)} ${perf}               |`,
               '',
               '### 🔐 Security Scan Results (OWASP ZAP)',
               '| Check | Status |',
@@ -505,6 +579,7 @@ jobs:
               '',
               '> 📥 Download `zap-security-report` artifact → open `zap_report.html` for full ZAP findings.',
               '> 📋 Download `manual-security-report` artifact → open `security-manual.txt` for curl check results.',
+              '> ⚡ Download `jmeter-performance-report` artifact → open `index.html` for load test results.',
               '',
               '---',
               allTestsPassed
