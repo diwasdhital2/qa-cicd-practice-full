@@ -12,6 +12,7 @@
  *   - Error paths are handled gracefully without corrupting state
  */
 
+import { test, expect } from '@playwright/test';
 import { createApp } from '../../app/index';
 import client from '../helpers/client';
 
@@ -32,24 +33,24 @@ interface ApiClient {
   close: () => void;
 }
 
-let app: ReturnType<typeof createApp>;
-let api: ApiClient;
-
-beforeAll(() => {
-  app = createApp();
-  api = client(app);
-});
-
-afterAll(() => api.close());
-
-beforeEach(async () => {
-  await api.post('/test/reset');
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // JOURNEY 1: New customer shops
 // ═══════════════════════════════════════════════════════════════════════════
-describe('E2E Journey 1: Customer browses store and places an order', () => {
+test.describe('E2E Journey 1: Customer browses store and places an order', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ApiClient;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('complete browse → select → order → confirm flow', async () => {
     // ── Step 1: Customer opens the store ──────────────────────────────────
     const catalog = await api.get('/products');
@@ -89,7 +90,21 @@ describe('E2E Journey 1: Customer browses store and places an order', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // JOURNEY 2: Admin manages product inventory
 // ═══════════════════════════════════════════════════════════════════════════
-describe('E2E Journey 2: Admin manages product catalog', () => {
+test.describe('E2E Journey 2: Admin manages product catalog', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ApiClient;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('create → update price → restock → discontinue', async () => {
     // ── Step 1: Admin creates a new product ───────────────────────────────
     const created = await api.post('/products', {
@@ -130,7 +145,21 @@ describe('E2E Journey 2: Admin manages product catalog', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // JOURNEY 3: Multiple customers, isolated orders
 // ═══════════════════════════════════════════════════════════════════════════
-describe('E2E Journey 3: Multiple concurrent customers', () => {
+test.describe('E2E Journey 3: Multiple concurrent customers', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ApiClient;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('separate customers have independent order histories', async () => {
     // Three customers shop at the same time
     await Promise.all([
@@ -167,7 +196,21 @@ describe('E2E Journey 3: Multiple concurrent customers', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // JOURNEY 4: Error resilience — bad requests don't corrupt state
 // ═══════════════════════════════════════════════════════════════════════════
-describe('E2E Journey 4: System stays consistent after failures', () => {
+test.describe('E2E Journey 4: System stays consistent after failures', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ApiClient;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('failed product creation does not change product count', async () => {
     const before = await api.get('/products');
     await api.post('/products', { name: '', price: -1 }); // invalid
@@ -203,25 +246,39 @@ describe('E2E Journey 4: System stays consistent after failures', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // JOURNEY 5: Pre-deploy smoke test (must pass before releasing to production)
 // ═══════════════════════════════════════════════════════════════════════════
-describe('E2E Journey 5: Pre-deploy smoke test', () => {
+test.describe('E2E Journey 5: Pre-deploy smoke test', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ApiClient;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   const endpoints: Array<{
     label: string;
     method: 'get' | 'post' | 'put' | 'delete';
     path: string;
     expected: number;
   }> = [
-    { label: 'GET /health',         method: 'get',    path: '/health',            expected: 200 },
-    { label: 'GET /products',       method: 'get',    path: '/products',          expected: 200 },
-    { label: 'GET /products/1',     method: 'get',    path: '/products/1',        expected: 200 },
-    { label: 'GET /orders/smoke',   method: 'get',    path: '/orders/smoke',      expected: 200 },
+    { label: 'GET /health',       method: 'get', path: '/health',       expected: 200 },
+    { label: 'GET /products',     method: 'get', path: '/products',     expected: 200 },
+    { label: 'GET /products/1',   method: 'get', path: '/products/1',   expected: 200 },
+    { label: 'GET /orders/smoke', method: 'get', path: '/orders/smoke', expected: 200 },
   ];
 
-  endpoints.forEach(({ label, method, path, expected }) => {
+  for (const { label, method, path, expected } of endpoints) {
     test(`${label} returns ${expected}`, async () => {
       const res = await api[method](path);
       expect(res.status).toBe(expected);
     });
-  });
+  }
 
   test('can complete a full transaction in under 500ms', async () => {
     const start = Date.now();
@@ -230,7 +287,7 @@ describe('E2E Journey 5: Pre-deploy smoke test', () => {
     const list = await api.get('/products?category=test');
     const id = list.body.data[0].id;
     await api.post('/orders', { productId: id, quantity: 1, userId: 'smoke-user' });
-    await api.get(`/orders/smoke-user`);
+    await api.get('/orders/smoke-user');
 
     const duration = Date.now() - start;
     expect(duration).toBeLessThan(500);

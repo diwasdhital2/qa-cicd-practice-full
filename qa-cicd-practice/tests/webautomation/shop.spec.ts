@@ -46,7 +46,7 @@ test.describe('Products page', () => {
   test('should show product details correctly', async ({ page }) => {
     await page.goto('/products/1');
     await expect(page.locator('h1')).toContainText('Wireless Headphones');
-    await expect(page.locator('.pprice')).toContainText('$59.99');
+    await expect(page.getByText('$59.99')).toBeVisible();
   });
 
 });

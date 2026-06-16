@@ -4,28 +4,29 @@
  * Goal   : Validate each endpoint individually, edge cases, error handling
  * Runtime: ~1–2 seconds
  */
-'use strict';
 
-const { createApp } = require('../../app/index');
-const client = require('../helpers/client');
-
-let app, api;
-
-beforeAll(() => {
-  app = createApp();
-  api = client(app);
-});
-
-afterAll(() => api.close());
-
-beforeEach(async () => {
-  await api.post('/test/reset');
-});
+import { test, expect } from '@playwright/test';
+import { createApp } from '../../app/index';
+import client from '../helpers/client';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /health
 // ═══════════════════════════════════════════════════════════════════════════
-describe('GET /health', () => {
+test.describe('GET /health', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('returns 200 with status ok', async () => {
     const res = await api.get('/health');
     expect(res.status).toBe(200);
@@ -38,7 +39,21 @@ describe('GET /health', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /products
 // ═══════════════════════════════════════════════════════════════════════════
-describe('GET /products', () => {
+test.describe('GET /products', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('returns all seed products', async () => {
     const res = await api.get('/products');
     expect(res.status).toBe(200);
@@ -51,7 +66,9 @@ describe('GET /products', () => {
     const res = await api.get('/products?category=electronics');
     expect(res.status).toBe(200);
     expect(res.body.count).toBe(2);
-    res.body.data.forEach(p => expect(p.category).toBe('electronics'));
+    for (const p of res.body.data) {
+      expect(p.category).toBe('electronics');
+    }
   });
 
   test('filters by category=furniture', async () => {
@@ -71,7 +88,21 @@ describe('GET /products', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /products/:id
 // ═══════════════════════════════════════════════════════════════════════════
-describe('GET /products/:id', () => {
+test.describe('GET /products/:id', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('returns product by valid id', async () => {
     const res = await api.get('/products/1');
     expect(res.status).toBe(200);
@@ -91,8 +122,22 @@ describe('GET /products/:id', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /products
 // ═══════════════════════════════════════════════════════════════════════════
-describe('POST /products', () => {
+test.describe('POST /products', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
   const valid = { name: 'Keyboard', price: 79.99, stock: 100, category: 'electronics' };
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
 
   test('creates a product and returns 201', async () => {
     const res = await api.post('/products', valid);
@@ -156,13 +201,27 @@ describe('POST /products', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // PUT /products/:id
 // ═══════════════════════════════════════════════════════════════════════════
-describe('PUT /products/:id', () => {
+test.describe('PUT /products/:id', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('updates product name, other fields unchanged', async () => {
     const res = await api.put('/products/1', { name: 'Gaming Laptop' });
     expect(res.status).toBe(200);
     expect(res.body.data.name).toBe('Gaming Laptop');
-    expect(res.body.data.price).toBe(999.99);   // unchanged
-    expect(res.body.data.stock).toBe(50);         // unchanged
+    expect(res.body.data.price).toBe(999.99); // unchanged
+    expect(res.body.data.stock).toBe(50);      // unchanged
   });
 
   test('updates price only', async () => {
@@ -192,7 +251,21 @@ describe('PUT /products/:id', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // DELETE /products/:id
 // ═══════════════════════════════════════════════════════════════════════════
-describe('DELETE /products/:id', () => {
+test.describe('DELETE /products/:id', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('deletes existing product and returns it', async () => {
     const res = await api.delete('/products/1');
     expect(res.status).toBe(200);
