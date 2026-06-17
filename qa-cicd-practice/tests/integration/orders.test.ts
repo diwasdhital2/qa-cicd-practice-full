@@ -5,35 +5,38 @@
  *          and that multiple components work together correctly.
  * Runtime: ~3–5 seconds
  */
- //this is a test comment for practice
-'use strict';
-//this is a test comment to trigger the pipeline
-const { createApp } = require('../../app/index');
-const client = require('../helpers/client');
 
-let app, api;
+// this is a test comment for practice
+// this is a test comment to trigger the pipeline
 
-beforeAll(() => {
-  app = createApp();
-  api = client(app);
-});
-
-afterAll(() => api.close());
-
-beforeEach(async () => {
-  await api.post('/test/reset');
-});
+import { test, expect } from '@playwright/test';
+import { createApp } from '../../app/index';
+import client from '../helpers/client';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /orders — Order creation
 // ═══════════════════════════════════════════════════════════════════════════
-describe('POST /orders — create order', () => {
+test.describe('POST /orders — create order', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('creates valid order and returns 201', async () => {
     const res = await api.post('/orders', { productId: 1, quantity: 2, userId: 'user-001' });
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
     expect(res.body.data.status).toBe('confirmed');
-    expect(res.body.data.total).toBe(1999.98);   // 2 × 999.99
+    expect(res.body.data.total).toBe(1999.98); // 2 × 999.99
     expect(res.body.data.userId).toBe('user-001');
   });
 
@@ -84,6 +87,7 @@ describe('POST /orders — create order', () => {
     expect(res.status).toBe(400);
   });
 
+  // comment
   test('order total is correctly calculated', async () => {
     const res = await api.post('/orders', { productId: 2, quantity: 3, userId: 'user-003' });
     // Mouse: 29.99 × 3 = 89.97
@@ -94,7 +98,21 @@ describe('POST /orders — create order', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /orders/:userId
 // ═══════════════════════════════════════════════════════════════════════════
-describe('GET /orders/:userId — retrieve user orders', () => {
+test.describe('GET /orders/:userId — retrieve user orders', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('returns empty list for user with no orders', async () => {
     const res = await api.get('/orders/unknown-user');
     expect(res.status).toBe(200);
@@ -109,7 +127,9 @@ describe('GET /orders/:userId — retrieve user orders', () => {
 
     const res = await api.get('/orders/alice');
     expect(res.body.count).toBe(2);
-    res.body.data.forEach(o => expect(o.userId).toBe('alice'));
+    for (const o of res.body.data) {
+      expect(o.userId).toBe('alice');
+    }
   });
 
   test('order list grows with each purchase', async () => {
@@ -126,7 +146,21 @@ describe('GET /orders/:userId — retrieve user orders', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /orders/detail/:id
 // ═══════════════════════════════════════════════════════════════════════════
-describe('GET /orders/detail/:id — order detail', () => {
+test.describe('GET /orders/detail/:id — order detail', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('retrieves specific order by id', async () => {
     const created = await api.post('/orders', { productId: 2, quantity: 1, userId: 'user-detail' });
     const orderId = created.body.data.id;
@@ -146,7 +180,21 @@ describe('GET /orders/detail/:id — order detail', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // Multi-step workflow: order-then-verify
 // ═══════════════════════════════════════════════════════════════════════════
-describe('Workflow: create product → place order → verify stock', () => {
+test.describe('Workflow: create product → place order → verify stock', () => {
+  let app: ReturnType<typeof createApp>;
+  let api: ReturnType<typeof client>;
+
+  test.beforeAll(() => {
+    app = createApp();
+    api = client(app);
+  });
+
+  test.afterAll(() => api.close());
+
+  test.beforeEach(async () => {
+    await api.post('/test/reset');
+  });
+
   test('full product lifecycle with order', async () => {
     // 1. Admin adds a new product
     const created = await api.post('/products', {
