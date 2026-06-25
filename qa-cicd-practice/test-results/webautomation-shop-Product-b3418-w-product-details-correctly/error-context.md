@@ -12,7 +12,7 @@
 # Error details
 
 ```
-Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3001/products/1
+Error: page.goto: net::ERR_ABORTED; maybe frame was detached?
 Call log:
   - navigating to "http://localhost:3001/products/1", waiting until "load"
 
@@ -68,7 +68,7 @@ Call log:
   45  | 
   46  |   test('should show product details correctly', async ({ page }) => {
 > 47  |     await page.goto('/products/1');
-      |                ^ Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3001/products/1
+      |                ^ Error: page.goto: net::ERR_ABORTED; maybe frame was detached?
   48  |     await expect(page.locator('h1')).toContainText('Wireless Headphones');
   49  |     await expect(page.getByText('$59.99')).toBeVisible();
   50  |   });
