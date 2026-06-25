@@ -7,7 +7,7 @@
 # Test info
 
 - Name: webautomation\shop.spec.ts >> Homepage >> should show featured products on homepage
-- Location: tests\webautomation\shop.spec.ts:11:7
+- Location: qa-cicd-practice\tests\webautomation\shop.spec.ts:11:7
 
 # Error details
 
