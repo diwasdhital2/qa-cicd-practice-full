@@ -5,27 +5,9 @@
  * Runtime: ~1–2 seconds
  */
 
-<<<<<<< HEAD:qa-cicd-practice/tests/unit/products.test.js
-const { createApp } = require('../../app/index');
-const client = require('../helpers/client');
-
-let app, api;
-
-beforeAll(() => {
-  app = createApp();
-  api = client(app);
-});
-// Close server after all tests to free up resources
-afterAll(() => api.close());
-
-beforeEach(async () => {
-  await api.post('/test/reset');
-});
-=======
 import { test, expect } from '@playwright/test';
 import { createApp } from '../../app/index';
 import client from '../helpers/client';
->>>>>>> develop:qa-cicd-practice/tests/unit/products.test.ts
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /health
